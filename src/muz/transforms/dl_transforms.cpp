@@ -33,6 +33,7 @@ Revision History:
 #include"dl_mk_quantifier_instantiation.h"
 #include"dl_mk_subsumption_checker.h"
 #include"dl_mk_scale.h"
+#include"dl_mk_synchronize.h"
 #include"fixedpoint_params.hpp"
 
 namespace datalog {
@@ -78,6 +79,9 @@ namespace datalog {
         }
         if (ctx.get_params().xform_magic()) {
             transf.register_plugin(alloc(datalog::mk_magic_symbolic, ctx, 36020));
+        }
+        if (ctx.get_params().datalog_synchronization()) {
+            transf.register_plugin(alloc(datalog::mk_synchronize, ctx, 34900));
         }
         ctx.transform_rules(transf);
     }
