@@ -27,10 +27,10 @@ struct ground_sat_answer_op::frame {
         spacer::manager &pm = pt.get_manager();
 
         m_fact = m.mk_app(head(), m_gnd_subst.size(), m_gnd_subst.c_ptr());
-        if (pt.head()->get_arity() == 0)
+        if (head()->get_arity() == 0)
             m_gnd_eq = m.mk_true();
         else {
-            SASSERT(m_gnd_subst.size() == pt.head()->get_arity());
+            SASSERT(m_gnd_subst.size() == head()->get_arity());
             for (unsigned i = 0, sz = pt.sig_size(); i < sz; ++i) {
                 m_gnd_eq = m.mk_eq(m.mk_const(pm.o2n(pt.sig(i), 0)),
                                       m_gnd_subst.get(i));
@@ -38,7 +38,7 @@ struct ground_sat_answer_op::frame {
         }
     }
 
-    func_decl* head() {return m_pt.head();}
+    func_decl* head() {SASSERT(m_pt.heads().size() == 1); return m_pt.heads()[0];}
     expr* fact() {return m_fact;}
     const datalog::rule &rule() {return m_rf->get_rule();}
     pred_transformer &pt() {return m_pt;}
@@ -57,7 +57,8 @@ proof_ref ground_sat_answer_op::operator()(pred_transformer &query) {
 
     // -- find substitution for a query if query is not nullary
     expr_ref_vector qsubst(m);
-    if (query.head()->get_arity() > 0) {
+    SASSERT(query.heads().size() == 1);
+    if (query.heads()[0]->get_arity() > 0) {
         solver::scoped_push _s_(*m_solver);
         m_solver->assert_expr(query.get_last_rf()->get());
         lbool res = m_solver->check_sat(0, nullptr);

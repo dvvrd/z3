@@ -158,14 +158,20 @@ std::ostream &json_marshaller::marshal(std::ostream &out) const {
             if (expand_time > 0) {
                 a = true;
                 std::ostringstream pob_expr;
+                std::ostringstream heads;
                 json_marshal(pob_expr, n->post(), n->get_ast_manager());
+                auto const& head_decls = n->pt().heads();
+                heads << "\"" << head_decls[0]->get_name() << "\"";
+                for (unsigned i = 1; i < head_decls.size(); ++i) {
+                    heads << "," << "\"" << head_decls[i]->get_name() << "\"";
+                }
 
                 nodes << ((unsigned)nodes.tellp() == 0 ? "" : ",\n") <<
                     "{\"id\":\"" << depth << n <<
                     "\",\"relative_time\":\"" << expand_time / root_expand_time <<
                     "\",\"absolute_time\":\"" << std::setprecision(2) << expand_time <<
-                    "\",\"predicate\":\"" << n->pt().head()->get_name() <<
-                    "\",\"expr_id\":\"" << n->post()->get_id() <<
+                    "\",\"predicates\":[" << heads.str() <<
+                    "],\"expr_id\":\"" << n->post()->get_id() <<
                     "\",\"pob_id\":\"" << pob_id <<
                     "\",\"depth\":\"" << depth <<
                     "\",\"expr\":" << pob_expr.str() << "}";

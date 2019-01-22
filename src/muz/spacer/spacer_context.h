@@ -388,8 +388,10 @@ class pred_transformer {
     ast_manager&                 m;                 // ast_manager
     context&                     ctx;               // spacer::context
 
-    func_decl_ref                m_head;            // predicate
+    func_decl_ref_vector         m_heads;           // predicates
+    symbol                       m_name;            // name
     func_decl_ref_vector         m_sig;             // signature
+    func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;           // pt rules used to derive transformer
     ptr_vector<datalog::rule>    m_rules;           // rules used to derive transformer
@@ -413,13 +415,14 @@ class pred_transformer {
     stopwatch                    m_mbp_watch;
 
     void init_sig();
+    symbol mk_name() const;
     app_ref mk_extend_lit();
     void ensure_level(unsigned level);
     void add_lemma_core (lemma *lemma, bool ground_only = false);
     void add_lemma_from_child (pred_transformer &child, lemma *lemma,
                                unsigned lvl, bool ground_only = false);
 
-    void mk_assumptions(func_decl* head, expr* fml, expr_ref_vector& result);
+    void mk_assumptions(func_decl_ref_vector const& heads, expr* fml, expr_ref_vector& result);
 
     // Initialization
     void init_rules(decl2rel const& pts);
@@ -439,7 +442,7 @@ class pred_transformer {
     const lemma_ref_vector &get_bg_invs() const {return m_frames.get_bg_invs();}
 
 public:
-    pred_transformer(context& ctx, manager& pm, func_decl* head);
+    pred_transformer(context& ctx, manager& pm, func_decl_ref_vector const& heads);
     ~pred_transformer() {}
 
     inline bool use_native_mbp ();
@@ -454,8 +457,11 @@ public:
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
     void initialize(decl2rel const& pts);
+    static pred_transformer* merge(ptr_vector<pred_transformer> const& pts);
 
-    func_decl* head() const {return m_head;}
+    symbol const& name() const {return m_name;}
+    func_decl_ref_vector const& heads() const {return m_heads;}
+    func_decl* merged_head() const {return m_merged_head;};
     ptr_vector<datalog::rule> const& rules() const {return m_rules;}
     func_decl* sig(unsigned i) const {return m_sig[i];} // signature
     func_decl* const* sig() {return m_sig.c_ptr();}
@@ -573,15 +579,6 @@ public:
     /// \brief interface to Model Based Projection
     void mbp(app_ref_vector &vars, expr_ref &fml, model &mdl,
              bool reduce_all_selects, bool force = false);
-
-    void updt_solver(prop_solver *solver);
-
-    void updt_solver_with_lemmas(prop_solver *solver,
-                                 const pred_transformer &pt,
-                                 app *rule_tag, unsigned pos);
-    void update_solver_with_rfs(prop_solver *solver,
-                              const pred_transformer &pt,
-                              app *rule_tag, unsigned pos);
 
 };
 
@@ -1114,7 +1111,6 @@ public:
     model_ref get_model();
     proof_ref get_proof() const;
 
-    expr_ref get_constraints (unsigned lvl);
     void add_constraint (expr *c, unsigned lvl);
 
     void new_lemma_eh(pred_transformer &pt, lemma *lem);

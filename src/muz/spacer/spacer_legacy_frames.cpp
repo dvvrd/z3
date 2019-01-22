@@ -85,7 +85,7 @@ bool pred_transformer::legacy_frames::propagate_to_next_level(unsigned src_level
 
     TRACE("spacer",
           tout << "propagating " << src_level << " to " << tgt_level;
-          tout << " for relation " << m_pt.head()->get_name() << "\n";);
+          tout << " for relation " << m_pt.name() << "\n";);
 
     for (unsigned i = 0; i < m_levels[src_level].size();) {
         expr_ref_vector &src = m_levels[src_level];
@@ -115,7 +115,7 @@ bool pred_transformer::legacy_frames::propagate_to_next_level(unsigned src_level
 
     CTRACE("spacer", m_levels[src_level].empty(),
            tout << "Fully propagated level "
-           << src_level << " of " << m_pt.head()->get_name() << "\n";);
+           << src_level << " of " << m_pt.name() << "\n";);
 
     return m_levels[src_level].empty();
 }
@@ -145,7 +145,7 @@ bool pred_transformer::legacy_frames::add_lemma(expr * lemma, unsigned lvl)
 void  pred_transformer::legacy_frames::propagate_to_infinity(unsigned level)
 {
     TRACE("spacer", tout << "propagating to oo from lvl " << level
-          << " of " << m_pt.m_head->get_name() << "\n";);
+          << " of " << m_pt.name() << "\n";);
 
     if (m_levels.empty()) { return; }
 
@@ -160,7 +160,7 @@ void  pred_transformer::legacy_frames::propagate_to_infinity(unsigned level)
 void pred_transformer::legacy_frames::inherit_frames(legacy_frames& other)
 {
 
-    SASSERT(m_pt.m_head == other.m_pt.m_head);
+    SASSERT(m_pt.m_heads == other.m_pt.m_heads);
     obj_map<expr, unsigned>::iterator it  = other.m_prop2level.begin();
     obj_map<expr, unsigned>::iterator end = other.m_prop2level.end();
     for (; it != end; ++it) { add_lemma(it->m_key, it->m_value); }

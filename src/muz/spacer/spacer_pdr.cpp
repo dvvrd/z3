@@ -269,7 +269,7 @@ bool context::gpdr_check_reachability(unsigned lvl, model_search &ms) {
         // check reachable cache
         if (pt.is_must_reachable(node->pob()->post(), nullptr)) {
             TRACE("spacer",
-                  tout << "must-reachable: " << pt.head()->get_name() << " level: "
+                  tout << "must-reachable: " << pt.name() << " level: "
                   << node->level() << " depth: " << node->depth () << "\n";
                   tout << mk_pp(node->pob()->post(), m) << "\n";);
 
@@ -353,13 +353,13 @@ bool context::gpdr_create_split_children(pob &n, const datalog::rule &r,
         pob * k = ppt.mk_pob(&n, prev_level(n.level()), n.depth(), post);
         out.push_back(k);
         IF_VERBOSE (1, verbose_stream()
-                    << "\n\tcreate_child: " << k->pt().head()->get_name()
+                    << "\n\tcreate_child: " << k->pt().name()
                     << " (" << k->level() << ", " << k->depth() << ") "
                     << (k->use_farkas_generalizer() ? "FAR " : "SUB ")
                     << k->post()->get_id();
                     verbose_stream().flush(););
         TRACE ("spacer",
-               tout << "create-pob: " << k->pt().head()->get_name()
+               tout << "create-pob: " << k->pt().name()
                << " level: " << k->level()
                << " depth: " << k->depth ()
                << " fvsz: " << k->get_free_vars_size() << "\n"
