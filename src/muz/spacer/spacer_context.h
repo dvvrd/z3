@@ -51,6 +51,7 @@ class context;
 
 typedef obj_map<datalog::rule const, app_ref_vector*> rule2inst;
 typedef obj_map<func_decl, pred_transformer*> decl2rel;
+typedef obj_map<func_decl, app*> decl2app;
 
 class pob;
 typedef ref<pob> pob_ref;
@@ -404,8 +405,7 @@ class pred_transformer {
     expr_ref_vector              m_transition_clause; // extra clause for trans
     expr_ref                     m_transition;      // transition relation
     expr_ref                     m_init;            // initial condition
-    app_ref                      m_extend_lit0;     // first literal used to extend initial state
-    app_ref                      m_extend_lit;      // current literal to extend initial state
+    decl2app                     m_extend_lits;     // current literal to extend initial state
     bool                         m_all_init;        // true if the pt has no uninterpreted body in any rule
     ptr_vector<func_decl>        m_predicates;      // temp vector used with find_predecessors()
     stats                        m_stats;
@@ -416,7 +416,7 @@ class pred_transformer {
 
     void init_sig();
     symbol mk_name() const;
-    app_ref mk_extend_lit();
+    void mk_extend_lits();
     void ensure_level(unsigned level);
     void add_lemma_core (lemma *lemma, bool ground_only = false);
     void add_lemma_from_child (pred_transformer &child, lemma *lemma,
@@ -434,7 +434,7 @@ class pred_transformer {
 
     void add_premises(decl2rel const& pts, unsigned lvl, datalog::rule& rule, expr_ref_vector& r);
 
-    app_ref mk_fresh_rf_tag ();
+    app_ref mk_fresh_rf_tag (func_decl *head);
 
     // get tagged formulae of all of the background invariants for all of the
     // predecessors of the current transformer
@@ -443,7 +443,7 @@ class pred_transformer {
 
 public:
     pred_transformer(context& ctx, manager& pm, func_decl_ref_vector const& heads);
-    ~pred_transformer() {}
+    ~pred_transformer() { for (auto &entry : m_extend_lits) m.dec_ref(entry.m_value); }
 
     inline bool use_native_mbp ();
     reach_fact *get_rf (expr *v) {
@@ -569,7 +569,7 @@ public:
                           bool is_init);
 
     /// \brief Adds a given expression to the set of initial rules
-    app* extend_initial (expr *e);
+    app* extend_initial (func_decl *head, expr *e);
 
     /// \brief Returns true if the obligation is already blocked by current lemmas
     bool is_blocked (pob &n, unsigned &uses_level);

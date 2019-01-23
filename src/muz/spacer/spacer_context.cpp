@@ -732,18 +732,12 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ref_vect
     m_frames(*this),
     m_reach_facts(), m_rf_init_sz(0),
     m_transition_clause(m), m_transition(m), m_init(m),
-    m_extend_lit0(m), m_extend_lit(m),
     m_all_init(false)
 {
-    for (unsigned i = 0; i < heads.size(); ++i) {
-
-    }
     m_solver = alloc(prop_solver, m, ctx.mk_solver0(), ctx.mk_solver1(),
                      ctx.get_params(), m_name);
-    init_sig ();
-
-    m_extend_lit = mk_extend_lit();
-    m_extend_lit0 = m_extend_lit;
+    init_sig();
+    mk_extend_lits();
 }
 
 
@@ -765,15 +759,16 @@ symbol pred_transformer::mk_name() const
     return symbol(buffer.c_str());
 }
 
-app_ref pred_transformer::mk_extend_lit() {
+void pred_transformer::mk_extend_lits() {
     app_ref v(m);
     std::stringstream name;
-    // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // dvvrd: TODO: should we maintain one extend_lit?
-    name << m_name << "_ext0";
-    // name << m_head->get_name () << "_ext0";
-    v = m.mk_const (symbol(name.str().c_str()), m.mk_bool_sort());
-    return app_ref(m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ()))), m);
+    for (auto *head : m_heads) {
+        name << head->get_name () << "_ext0";
+        v = m.mk_const (symbol(name.str().c_str()), m.mk_bool_sort());
+        app *lit = m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ())));
+        m.inc_ref(lit);
+        m_extend_lits.insert(head, lit);
+    }
 }
 
 
@@ -1080,15 +1075,13 @@ void pred_transformer::add_lemma_from_child (pred_transformer& child,
 
 }
 
-app_ref pred_transformer::mk_fresh_rf_tag ()
+app_ref pred_transformer::mk_fresh_rf_tag (func_decl* head)
 {
+    SASSERT(head);
     std::stringstream name;
     func_decl_ref decl(m);
 
-    // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // dvvrd: TODO: should we maintain one reach_tag?
-    name << m_name << "#reach_tag_" << m_reach_facts.size ();
-    // name << head ()->get_name () << "#reach_tag_" << m_reach_facts.size ();
+    name << head->get_name () << "#reach_tag_" << m_reach_facts.size ();
     decl = m.mk_func_decl (symbol (name.str ().c_str ()), 0,
                            (sort*const*)nullptr, m.mk_bool_sort ());
     return app_ref(m.mk_const (pm.get_n_pred (decl)), m);
@@ -1101,7 +1094,7 @@ void pred_transformer::add_rf (reach_fact *rf)
                    verbose_stream ());
 
     TRACE ("spacer",
-           tout << "add_rf: " << m_name << " "
+           tout << "[" << m_name << "] add_rf: " << rf->get_rule().get_head()->get_name() << " "
            // tout << "add_rf: " << head()->get_name() << " "
            << (rf->is_init () ? "INIT " : "")
            << mk_pp(rf->get (), m) << "\n";);
@@ -1120,10 +1113,10 @@ void pred_transformer::add_rf (reach_fact *rf)
 
     if (!m_reach_facts.empty()) {last_tag = m_reach_facts.back()->tag();}
     if (rf->is_init ())
-        new_tag = mk_fresh_rf_tag();
+        new_tag = mk_fresh_rf_tag(rf->get_rule().get_decl());
     else
         // side-effect: updates m_solver with rf
-        new_tag = to_app(extend_initial(rf->get())->get_arg(0));
+        new_tag = to_app(extend_initial(rf->get_rule().get_decl(), rf->get())->get_arg(0));
     rf->set_tag(new_tag);
 
     // add to m_reach_facts
@@ -1482,14 +1475,21 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     // check local reachability;
     // result is either sat (with some reach assumps) or
     // unsat (even with no reach assumps)
-    expr *bg = m_extend_lit.get ();
+    ptr_vector<expr> bg;
+    for (auto &entry : m_extend_lits) {
+        bg.push_back(entry.m_value);
+    }
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [is_reachable]: checking " << post.size() << " assumptions for ";);
     for (auto &p : post) {
         STRACE("spacer", tout << mk_pp(p, m) << "\n";);
     }
+//    STRACE("spacer", tout << "----- bg (" << bg.size() << ") ----- \n";);
+//    for (auto p : bg) {
+//        STRACE("spacer", tout << mk_pp(p, m) << "\n";);
+//    }
     STRACE("spacer", tout << "\n";);
     lbool is_sat = m_solver->check_assumptions (post, reach_assumps,
-                                               m_transition_clause, 1, &bg, 0);
+                                               m_transition_clause, bg.size(), bg.c_ptr(), 0);
 
     TRACE ("spacer",
            if (!reach_assumps.empty ()) {
@@ -1605,7 +1605,9 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
     m_solver->set_core(core);
     m_solver->set_model(mdl_ref_ptr);
 
-    conj.push_back(m_extend_lit);
+    for (auto &entry : m_extend_lits) {
+        conj.push_back(entry.m_value);
+    }
     if (ctx.use_bg_invs()) get_pred_bg_invs(conj);
 
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [is_invariant]: checking " << cand.size() << " assumptions for ";);
@@ -1648,7 +1650,9 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
     m_solver->set_model (nullptr);
     expr_ref_vector aux (m);
     if (ctx.use_bg_invs()) get_pred_bg_invs(conj);
-    conj.push_back (m_extend_lit);
+    for (auto &entry : m_extend_lits) {
+        conj.push_back(entry.m_value);
+    }
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [check_inductive]: checking " << state.size() << " assumptions for ";);
     for (auto &p : state) {
         STRACE("spacer", tout << mk_pp(p, m) << "\n";);
@@ -1745,7 +1749,10 @@ void pred_transformer::init_rules(decl2rel const& pts) {
     else {
         unsigned i = 0;
         expr_ref_vector transitions(m);
-        m_transition_clause.push_back (m_extend_lit->get_arg(0));
+        for (auto &entry : m_extend_lits) {
+            m_transition_clause.push_back(entry.m_value->get_arg(0));
+        }
+        // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         // dvvrd: TODO: hack. should calculate cartesian product of rules or at least group them by heads
         for (auto *head : m_heads) {
             for (auto &kv : m_pt_rules) {
@@ -1933,30 +1940,32 @@ void pred_transformer::add_premises(decl2rel const& pts, unsigned lvl,
 void pred_transformer::inherit_lemmas(pred_transformer& other)
 {m_frames.inherit_frames (other.m_frames);}
 
-app* pred_transformer::extend_initial (expr *e)
+app* pred_transformer::extend_initial (func_decl *head, expr *e)
 {
+    SASSERT(m_extend_lits.contains(head));
     // create fresh extend literal
-    // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // dvvrd: TODO: should we maintain one reach_tag?
     app_ref v(m);
     std::stringstream name;
-    name << m_name << "_ext";
-    // name << m_head->get_name() << "_ext";
+    name << head->get_name() << "_ext";
     v = m.mk_fresh_const (name.str ().c_str (),
                           m.mk_bool_sort ());
     v = m.mk_const (pm.get_n_pred (v->get_decl ()));
 
     expr_ref ic(m);
 
+    app *old_lit = m_extend_lits.find(head);
     // -- extend the initial condition
-    ic = m.mk_or (m_extend_lit, e, v);
+    ic = m.mk_or (old_lit, e, v);
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [extend_initial]: asserting " << mk_pp(ic, m) << "\n";);
     m_solver->assert_expr (ic);
 
+    app_ref result(m.mk_not (v), m);
     // -- remember the new extend literal
-    m_extend_lit = m.mk_not (v);
+    m.dec_ref(old_lit);
+    m.inc_ref(result);
+    m_extend_lits.insert(head, result);
 
-    return m_extend_lit;
+    return result;
 }
 
 
