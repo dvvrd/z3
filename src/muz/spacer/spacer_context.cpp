@@ -195,10 +195,9 @@ void pob_queue::push(pob &n) {
 // ----------------
 // derivation
 
-derivation::derivation (pob& parent, datalog::rule const& rule,
-                        expr *trans, app_ref_vector const &evars) :
+derivation::derivation (pob& parent, expr *trans,
+                        app_ref_vector const &evars) :
     m_parent (parent),
-    m_rule (rule),
     m_premises (),
     m_active (0),
     m_trans (trans, m_parent.get_ast_manager ()),
@@ -900,34 +899,44 @@ reach_fact *pred_transformer::get_used_origin_rf(model& mdl, unsigned oidx) {
     return nullptr;
 }
 
-const datalog::rule *pred_transformer::find_rule(model &model) {
+void pred_transformer::find_rules(model &model, ptr_vector<const datalog::rule>& rules) {
+    SASSERT(rules.empty());
     expr_ref val(m);
 
+    func_decl_set processed_heads;
     for (auto &kv : m_pt_rules) {
-        app *tag = kv.m_value->tag();
-        if (model.is_true_decl(tag->get_decl())) {
-            return &kv.m_value->rule();
+        if (!processed_heads.contains(kv.m_value->rule().get_decl())) {
+            app *tag = kv.m_value->tag();
+            if (model.is_true_decl(tag->get_decl())) {
+                rules.push_back(&kv.m_value->rule());
+                processed_heads.insert(kv.m_value->rule().get_decl());
+            }
         }
     }
-    return nullptr;
 }
 
-const datalog::rule *pred_transformer::find_rule(model &model,
-                                                 bool& is_concrete,
-                                                 vector<bool>& reach_pred_used,
-                                                 unsigned& num_reuse_reach)
+void pred_transformer::find_rules(model &model,
+                                  vector<bool>& is_concrete,
+                                  vector<bool>& reach_pred_used,
+                                  unsigned& num_reuse_reach,
+                                  ptr_vector<const datalog::rule>& rules)
 {
+    SASSERT(rules.empty());
+    SASSERT(is_concrete.empty());
+    obj_map<func_decl, const datalog::rule*> best_rules;
+    func_decl_set concrete_heads;
+
     // find a rule whose tag is true in the model;
     // prefer a rule where the model intersects with reach facts of all predecessors;
     // also find how many predecessors' reach facts are true in the model
     expr_ref vl(m);
-    const datalog::rule *r = ((datalog::rule*)nullptr);
-    //for (auto &entry : m_tag2rule) {
     for (auto &kv : m_pt_rules) {
         app* tag = kv.m_value->tag();
-        if (model.eval(tag->get_decl(), vl) && m.is_true(vl)) {
-            r = &kv.m_value->rule();
-            is_concrete = true;
+        // dvvrd: TODO: something should be done to repeating heads!
+        if (!concrete_heads.contains(kv.m_value->rule().get_decl()) && model.eval(tag->get_decl(), vl) && m.is_true(vl)) {
+            const datalog::rule *r = &kv.m_value->rule();
+            best_rules.insert(r->get_decl(), r);
+            bool intersects_with_all_rfs = true;
             num_reuse_reach = 0;
             reach_pred_used.reset();
             unsigned tail_sz = r->get_uninterpreted_tail_size();
@@ -941,28 +950,42 @@ const datalog::rule *pred_transformer::find_rule(model &model,
                     pm.formula_n2o(pt.get_last_rf_tag (), v, i);
                     model.eval(to_app (v.get ())->get_decl (), vl);
                     used = m.is_false (vl);
-                    is_concrete &= used;
+                    intersects_with_all_rfs &= used;
                 }
 
                 reach_pred_used.push_back (used);
                 if (used) {num_reuse_reach++;}
             }
-            if (is_concrete) {break;}
+            if (intersects_with_all_rfs) {
+                concrete_heads.insert(r->get_decl());
+            }
         }
     }
     // SASSERT (r);
-    // reached by a reachability fact
-    if (!r) { is_concrete = true; }
-    return r;
+    for (auto &kv : best_rules) {
+        is_concrete.push_back(concrete_heads.contains(kv.m_key));
+        rules.push_back(kv.m_value);
+    }
 }
 
-// dvvrd: puts into preds (in fact, m_predicates) predicates from body of r
 void pred_transformer::find_predecessors(datalog::rule const& r, ptr_vector<func_decl>& preds) const
 {
     preds.reset();
     unsigned tail_sz = r.get_uninterpreted_tail_size();
     for (unsigned ti = 0; ti < tail_sz; ti++) {
         preds.push_back(r.get_tail(ti)->get_decl());
+    }
+}
+
+void pred_transformer::find_merged_predecessors(ptr_vector<const datalog::rule> const& rules, ptr_vector<func_decl>& preds) const
+{
+    // dvvrd: TODO: this is the moment to push merged pts
+    preds.reset();
+    for (auto *r : rules) {
+        unsigned tail_sz = r->get_uninterpreted_tail_size();
+        for (unsigned ti = 0; ti < tail_sz; ti++) {
+            preds.push_back(r->get_tail(ti)->get_decl());
+        }
     }
 }
 
@@ -1409,7 +1432,8 @@ void pred_transformer::mbp(app_ref_vector &vars, expr_ref &fml, model &mdl,
 /// MAKES QUERY
 lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                                      model_ref* model, unsigned& uses_level,
-                                     bool& is_concrete, datalog::rule const*& r,
+                                     vector<bool>& is_concrete,
+                                     ptr_vector<const datalog::rule>& rules,
                                      vector<bool>& reach_pred_used,
                                      unsigned& num_reuse_reach)
 {
@@ -1503,9 +1527,12 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     if (is_sat == l_true || is_sat == l_undef) {
         if (core) { core->reset(); }
         if (model && model->get()) {
-            r = find_rule(**model, is_concrete, reach_pred_used, num_reuse_reach);
+            find_rules(**model, is_concrete, reach_pred_used, num_reuse_reach, rules);
             TRACE ("spacer", tout << "reachable "
-                   << "is_concrete " << is_concrete << " rused: ";
+                   << "is_concrete [ ";
+                   for (bool concr : is_concrete)
+                       tout << concr << " ";
+                   tout << "] rused: ";
                    for (unsigned i = 0, sz = reach_pred_used.size (); i < sz; ++i)
                        tout << reach_pred_used [i];
                    tout << "\n";);
@@ -1532,17 +1559,16 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
 
 /// returns true if lemma is blocked by an existing model
 bool pred_transformer::is_ctp_blocked(lemma *lem) {
-    if (!ctx.use_ctp()) {return false;}
+    if (!ctx.use_ctp() || !lem->has_ctp()) {return false;}
 
-    if (!lem->has_ctp()) {return false;}
     scoped_watch _t_(m_ctp_watch);
 
     model_ref &ctp = lem->get_ctp();
 
     // -- find rule of the ctp
-    const datalog::rule *r;
-    r = find_rule(*ctp);
-    if (r == nullptr) {
+    ptr_vector<const datalog::rule> rules;
+    find_rules(*ctp, rules);
+    if (rules.empty()) {
         // no rules means lemma is blocked forever because
         // it does not satisfy some derived facts
         lem->set_blocked(true);
@@ -1550,7 +1576,8 @@ bool pred_transformer::is_ctp_blocked(lemma *lem) {
     }
 
     // -- find predicates along the rule
-    find_predecessors(*r, m_predicates);
+    // dvvrd: this is the moment to get lemmas for combined symbols!!!
+    find_merged_predecessors(rules, m_predicates);
 
     // check if any lemma blocks the ctp model
     for (unsigned i = 0, sz = m_predicates.size(); i < sz; ++i) {
@@ -2223,7 +2250,8 @@ void pred_transformer::frames::simplify_formulas ()
 pob* pred_transformer::pob_manager::mk_pob(pob *parent,
                                            unsigned level, unsigned depth,
                                            expr *post,
-                                           app_ref_vector const &b) {
+                                           app_ref_vector const &b)
+{
     // create a new pob and set its post to normalize it
     pob p(parent, m_pt, level, depth, false);
     p.set_post(post, b);
@@ -3253,6 +3281,7 @@ bool context::is_requeue(pob &n) {
     return (n.level() >= m_pob_queue.max_level() ||
             m_pob_queue.max_level() - n.level() <= max_depth);
 }
+
 /// check whether node n is concretely reachable
 // dvvrd: used only in check_reachability. happens before expand_pob
 bool context::is_reachable(pob &n)
@@ -3282,8 +3311,8 @@ bool context::is_reachable(pob &n)
     model_ref mdl;
 
     // used in case n is reachable
-    bool is_concrete;
-    const datalog::rule * r = nullptr;
+    vector<bool> is_concrete;
+    ptr_vector<const datalog::rule> rules;
     // denotes which predecessor's (along r) reach facts are used
     vector<bool> reach_pred_used;
     unsigned num_reuse_reach = 0;
@@ -3292,23 +3321,27 @@ bool context::is_reachable(pob &n)
     // TBD: don't expose private field
     n.m_level = infty_level ();
     lbool res = n.pt().is_reachable(n, nullptr, &mdl,
-                                    uses_level, is_concrete, r,
+                                    uses_level, is_concrete, rules,
                                     reach_pred_used, num_reuse_reach);
     n.m_level = saved;
 
-    if (res != l_true || !is_concrete) {
+    bool is_concretely_reachable = true;
+    for (bool concr : is_concrete) {is_concretely_reachable &= concr;}
+    if (res != l_true || !is_concretely_reachable) {
         IF_VERBOSE(1, verbose_stream () << " F "
                    << std::fixed << std::setprecision(2)
                    << watch.get_seconds () << "\n";);
         return false;
     }
     SASSERT(res == l_true);
-    SASSERT(is_concrete);
+    SASSERT(is_concretely_reachable);
 
     // -- update must summary
-    if (r && r->get_uninterpreted_tail_size () > 0) {
-        reach_fact_ref rf = n.pt().mk_rf (n, *mdl, *r);
-        n.pt ().add_rf (rf.get ());
+    for (auto *r : rules) {
+        if (r && r->get_uninterpreted_tail_size () > 0) {
+            reach_fact_ref rf = n.pt().mk_rf (n, *mdl, *r);
+            n.pt ().add_rf (rf.get ());
+        }
     }
 
     // if n has a derivation, create a new child and report l_undef
@@ -3410,8 +3443,8 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
     model_ref model;
 
     // used in case n is reachable
-    bool is_concrete;
-    const datalog::rule * r = nullptr;
+    vector<bool> is_concrete;
+    ptr_vector<const datalog::rule> rules;
     // denotes which predecessor's (along r) reach facts are used
     vector<bool> reach_pred_used;
     unsigned num_reuse_reach = 0;
@@ -3436,7 +3469,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
     // dvvrd: cube = core
     // dvvrd: r = rule evaluating to true in model
-    lbool res = n.pt ().is_reachable (n, &cube, &model, uses_level, is_concrete, r,
+    lbool res = n.pt ().is_reachable (n, &cube, &model, uses_level, is_concrete, rules,
                                       reach_pred_used, num_reuse_reach);
     if (model) model->set_model_completion(false);
     checkpoint ();
@@ -3447,16 +3480,21 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // update stats
         m_stats.m_num_reuse_reach += num_reuse_reach;
 
-        // must-reachable
-        if (is_concrete) {
-            // -- update must summary
-            if (r && r->get_uninterpreted_tail_size() > 0) {
+        bool is_concretely_reachable = true;
+        for (unsigned i = 0; i < rules.size(); ++i) {
+            const datalog::rule *r = rules[i];
+            is_concretely_reachable &= is_concrete[i];
+            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
+                // -- update must summary
                 reach_fact_ref rf = n.pt().mk_rf (n, *model, *r);
                 checkpoint ();
                 n.pt ().add_rf (rf.get ());
                 checkpoint ();
             }
+        }
 
+        // must-reachable
+        if (is_concretely_reachable) {
             // if n has a derivation, create a new child and report l_undef
             // otherwise if n has no derivation or no new children, report l_true
             pob *next = nullptr;
@@ -3498,7 +3536,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                      <<  "] (" << n.pt().name() << ") "
                      << mk_pp(n.post(), m) << "\n";);
         out.push_back(&n);
-        VERIFY(create_children (n, *r, *model, reach_pred_used, out));
+        VERIFY(create_children (n, rules, *model, reach_pred_used, out));
         IF_VERBOSE(1, verbose_stream () << " U "
                    << std::fixed << std::setprecision(2)
                    << watch.get_seconds () << "\n";);
@@ -3583,11 +3621,18 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             bool has_new_child = false;
             SASSERT(m_weak_abs);
             m_stats.m_expand_pob_undef++;
-            if (r && r->get_uninterpreted_tail_size() > 0) {
+            bool has_uninterpreted_atoms = false;
+            for (auto *r : rules) {
+                if (r->get_uninterpreted_tail_size() > 0) {
+                    has_uninterpreted_atoms = true;
+                    break;
+                }
+            }
+            if (has_uninterpreted_atoms) {
                 // do not trust reach_pred_used
                 for (unsigned i = 0, sz = reach_pred_used.size(); i < sz; ++i)
                 { reach_pred_used[i] = false; }
-                has_new_child = create_children(n, *r, *model, reach_pred_used, out);
+                has_new_child = create_children(n, rules, *model, reach_pred_used, out);
             }
             IF_VERBOSE(1, verbose_stream() << " UNDEF "
                        << std::fixed << std::setprecision(2)
@@ -3772,7 +3817,8 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
 /**
    \brief create children states from model cube.
 */
-bool context::create_children(pob& n, datalog::rule const& r,
+bool context::create_children(pob& n,
+                              const ptr_vector<datalog::rule const> &rules,
                               model &mdl,
                               const vector<bool> &reach_pred_used,
                               pob_ref_buffer &out)
@@ -3780,23 +3826,20 @@ bool context::create_children(pob& n, datalog::rule const& r,
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
 
+    ptr_vector<func_decl> preds;
+    pt.find_merged_predecessors(rules, preds);
+
+    // obtain all formulas to consider for model generalization
+    expr_ref_vector forms(m), lits(m);
+    pt.get_transitions(rules, forms);
+    forms.push_back(n.post());
+
     TRACE("spacer",
           tout << "Model:\n";
           model_smt2_pp(tout, m, mdl, 0);
           tout << "\n";
-          tout << "Transition:\n" << mk_pp(pt.get_transition(r), m) << "\n";
+          tout << "Transition:\n" << forms << "\n";
           tout << "Pob:\n" << mk_pp(n.post(), m) << "\n";);
-
-    SASSERT (r.get_uninterpreted_tail_size () > 0);
-
-    ptr_vector<func_decl> preds;
-    pt.find_predecessors(r, preds);
-
-
-    // obtain all formulas to consider for model generalization
-    expr_ref_vector forms(m), lits(m);
-    forms.push_back(pt.get_transition(r));
-    forms.push_back(n.post());
 
     compute_implicant_literals (mdl, forms, lits);
     expr_ref phi = mk_and (lits);
@@ -3807,8 +3850,7 @@ bool context::create_children(pob& n, datalog::rule const& r,
         vars.push_back(m.mk_const(m_pm.o2n(pt.sig(i), 0)));
     }
     // local variables of the rule
-    ptr_vector<app>& aux_vars = pt.get_aux_vars(r);
-    vars.append(aux_vars.size(), aux_vars.c_ptr());
+    pt.get_aux_vars(rules, vars);
 
     // skolems of the pob
     n.get_skolems(vars);
@@ -3827,10 +3869,10 @@ bool context::create_children(pob& n, datalog::rule const& r,
 
     if (m_use_gpdr && preds.size() > 1) {
         SASSERT(vars.empty());
-        return gpdr_create_split_children(n, r, phi, mdl, out);
+        return gpdr_create_split_children(n, rules, phi, mdl, out);
     }
 
-    derivation *deriv = alloc(derivation, n, r, phi, vars);
+    derivation *deriv = alloc(derivation, n, phi, vars);
 
     // pick an order to process children
     unsigned_vector kid_order;
@@ -3876,12 +3918,16 @@ bool context::create_children(pob& n, datalog::rule const& r,
     // Optionally disable derivation optimization
     if (!m_use_derivations) { kid->reset_derivation(); }
 
+    bool is_true = mdl.is_true(n.post());
+    for (auto &trans : forms) {
+        if (!is_true) { break; }
+        is_true &= mdl.is_true(trans);
+    }
     // -- deriviation is abstract if the current weak model does
     // -- not satisfy 'T && phi'. It is possible to recover from
     // -- that more gracefully. For now, we just remove the
     // -- derivation completely forcing it to be recomputed
-    if (m_weak_abs && (!mdl.is_true(pt.get_transition(r)) ||
-                       !mdl.is_true(n.post())))
+    if (m_weak_abs && !is_true)
     { kid->reset_derivation(); }
 
     out.push_back(kid);

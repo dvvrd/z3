@@ -453,6 +453,7 @@ public:
         return nullptr;
     }
     void find_predecessors(datalog::rule const& r, ptr_vector<func_decl>& predicates) const;
+    void find_merged_predecessors(ptr_vector<const datalog::rule> const& rules, ptr_vector<func_decl>& predicates) const;
 
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
@@ -493,18 +494,34 @@ public:
                                 const ptr_vector<app> **aux);
 
     bool is_ctp_blocked(lemma *lem);
-    const datalog::rule *find_rule(model &mdl);
-    const datalog::rule *find_rule(model &mev, bool& is_concrete,
-                                   vector<bool>& reach_pred_used,
-                                   unsigned& num_reuse_reach);
+    void find_rules(model &mdl, ptr_vector<const datalog::rule>& rules);
+    void find_rules(model &mev, vector<bool>& is_concrete,
+                    vector<bool>& reach_pred_used,
+                    unsigned& num_reuse_reach,
+                    ptr_vector<const datalog::rule>& rules);
     expr* get_transition(datalog::rule const& r) {
         pt_rule *p;
         return m_pt_rules.find_by_rule(r, p) ? p->trans() : nullptr;
+    }
+    void get_transitions(ptr_vector<const datalog::rule> const& rules, expr_ref_vector &transitions) {
+        for (auto *r : rules) {
+            pt_rule *p;
+            if (m_pt_rules.find_by_rule(*r, p)) {
+                transitions.push_back(p->trans());
+            }
+        }
     }
     ptr_vector<app>& get_aux_vars(datalog::rule const& r) {
         pt_rule *p = nullptr;
         VERIFY(m_pt_rules.find_by_rule(r, p));
         return p->auxs();
+    }
+    void get_aux_vars(ptr_vector<const datalog::rule> const& rules, app_ref_vector& vars) {
+        for (auto *r : rules) {
+            pt_rule *p = nullptr;
+            VERIFY(m_pt_rules.find_by_rule(*r, p));
+            vars.append(p->auxs().size(), p->auxs().c_ptr());
+        }
     }
 
     bool propagate_to_next_level(unsigned level);
@@ -536,8 +553,8 @@ public:
     }
 
     lbool is_reachable(pob& n, expr_ref_vector* core, model_ref *model,
-                       unsigned& uses_level, bool& is_concrete,
-                       datalog::rule const*& r,
+                       unsigned& uses_level, vector<bool>& is_concrete,
+                       ptr_vector<const datalog::rule>& r,
                        vector<bool>& reach_pred_used,
                        unsigned& num_reuse_reach);
     bool is_invariant(unsigned level, lemma* lem,
@@ -769,9 +786,6 @@ class derivation {
     /// parent model node
     pob&                         m_parent;
 
-    /// the rule corresponding to this derivation
-    const datalog::rule &m_rule;
-
     /// the premises
     vector<premise>                     m_premises;
     /// pointer to the active premise
@@ -786,8 +800,7 @@ class derivation {
     /// existentially quantify vars and skolemize the result
     void exist_skolemize(expr *fml, app_ref_vector &vars, expr_ref &res);
 public:
-    derivation (pob& parent, datalog::rule const& rule,
-                expr *trans, app_ref_vector const &evars);
+    derivation (pob& parent, expr *trans, app_ref_vector const &evars);
     void add_premise (pred_transformer &pt, unsigned oidx,
                       expr * summary, bool must, const ptr_vector<app> *aux_vars = nullptr);
 
@@ -800,7 +813,6 @@ public:
     /// premise must be consistent with the transition relation
     pob *create_next_child ();
 
-    datalog::rule const& get_rule () const { return m_rule; }
     pob& get_parent () const { return m_parent; }
     ast_manager &get_ast_manager () const {return m_parent.get_ast_manager ();}
     manager &get_manager () const {return m_parent.get_manager ();}
@@ -986,7 +998,8 @@ class context {
     // Solve using gpdr strategy
     lbool gpdr_solve_core();
     bool gpdr_check_reachability(unsigned lvl, model_search &ms);
-    bool gpdr_create_split_children(pob &n, const datalog::rule &r,
+    bool gpdr_create_split_children(pob &n,
+                                    const ptr_vector<const datalog::rule> &rules,
                                     expr *trans,
                                     model &mdl,
                                     pob_ref_buffer &out);
@@ -999,7 +1012,8 @@ class context {
                    unsigned full_prop_lvl);
     bool is_reachable(pob &n);
     lbool expand_pob(pob &n, pob_ref_buffer &out);
-    bool create_children(pob& n, const datalog::rule &r,
+    bool create_children(pob& n,
+                         const ptr_vector<datalog::rule const> &rules,
                          model &mdl,
                          const vector<bool>& reach_pred_used,
                          pob_ref_buffer &out);

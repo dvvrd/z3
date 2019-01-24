@@ -304,13 +304,14 @@ bool context::gpdr_check_reachability(unsigned lvl, model_search &ms) {
     return root_node->is_closed();
 }
 
-bool context::gpdr_create_split_children(pob &n, const datalog::rule &r,
+bool context::gpdr_create_split_children(pob &n,
+                                         const ptr_vector<const datalog::rule> &rules,
                                          expr *trans,
                                          model &mdl,
                                          pob_ref_buffer &out) {
     pred_transformer &pt = n.pt();
     ptr_vector<func_decl> preds;
-    pt.find_predecessors(r, preds);
+    pt.find_merged_predecessors(rules, preds);
     SASSERT(preds.size() > 1);
 
     ptr_vector<pred_transformer> ppts;

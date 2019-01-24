@@ -526,7 +526,7 @@ namespace {
         implicant_picker(model &mdl) :
             m_model(mdl), m(m_model.get_manager()), m_arith(m), m_todo(m) {}
 
-        void operator()(expr_ref_vector &in, expr_ref_vector& out) {
+        void operator()(const expr_ref_vector &in, expr_ref_vector& out) {
             model::scoped_model_completion _sc_(m_model, false);
             pick_implicant(in, out);
         }
