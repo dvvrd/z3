@@ -227,8 +227,10 @@ void model_search::remove_node(model_node* _n, bool backtrack) {
 
 lbool context::gpdr_solve_core() {
     scoped_watch _w_(m_solve_watch);
+    ptr_vector<func_decl> key;
+    key.push_back(m_query_pred);
     //if there is no query predicate, abort
-    if (!m_rels.find(m_query_pred, m_query)) { return l_false; }
+    if (!m_rels.find(key, m_query)) { return l_false; }
 
     model_search ms(m_pdr_bfs);
     unsigned lvl = 0;
@@ -311,7 +313,7 @@ bool context::gpdr_create_split_children(pob &n,
                                          pob_ref_buffer &out) {
     pred_transformer &pt = n.pt();
     ptr_vector<func_decl> preds;
-    pt.find_merged_predecessors(rules, preds);
+    pt.find_predecessors(rules, preds);
     SASSERT(preds.size() > 1);
 
     ptr_vector<pred_transformer> ppts;

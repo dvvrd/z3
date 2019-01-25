@@ -720,11 +720,10 @@ pred_transformer::pt_rule &pred_transformer::pt_rules::mk_rule(const pred_transf
     return *p;
 }
 
-pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ref_vector const& heads):
+pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ptr_vector const& heads):
     pm(pm), m(pm.get_manager()),
     ctx(ctx), m_heads(heads),
     m_name(mk_name()),
-    m_sig(m),
     m_merged_head(m),
     m_reach_solver (ctx.mk_solver2()),
     m_pobs(*this),
@@ -740,16 +739,8 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ref_vect
 }
 
 
-struct func_decl_lt_proc : public std::binary_function<lemma*, lemma *, bool> {
-    bool operator() (func_decl *a, func_decl *b) {
-        return !a || !b || lt(a->get_name(), b->get_name());
-    }
-};
-
 symbol pred_transformer::mk_name() const
 {
-    // dvvrd: TODO: heads should be sorted
-    // std::sort(m_heads.begin(), m_heads.end(), func_decl_lt_proc());
     string_buffer<> buffer;
     buffer << m_heads[0]->get_name();
     for (unsigned i = 1; i < m_heads.size(); ++i) {
@@ -840,7 +831,7 @@ void pred_transformer::init_sig()
             m_sig.push_back(pm.get_o_pred(stm, 0));
         }
     }
-    m_merged_head = m_heads.size() == 1 ? m_heads[0].get() : m.mk_func_decl(m_name, domain.size(), domain.c_ptr(), m.mk_bool_sort());
+    m_merged_head = m_heads.size() == 1 ? m_heads[0] : m.mk_func_decl(m_name, domain.size(), domain.c_ptr(), m.mk_bool_sort());
 }
 
 void pred_transformer::ensure_level(unsigned level)
@@ -968,7 +959,7 @@ void pred_transformer::find_rules(model &model,
     }
 }
 
-void pred_transformer::find_predecessors(datalog::rule const& r, ptr_vector<func_decl>& preds) const
+void pred_transformer::find_predecessors(datalog::rule const& r, func_decl_ptr_vector& preds) const
 {
     preds.reset();
     unsigned tail_sz = r.get_uninterpreted_tail_size();
@@ -977,7 +968,7 @@ void pred_transformer::find_predecessors(datalog::rule const& r, ptr_vector<func
     }
 }
 
-void pred_transformer::find_merged_predecessors(ptr_vector<const datalog::rule> const& rules, ptr_vector<func_decl>& preds) const
+void pred_transformer::find_predecessors(ptr_vector<const datalog::rule> const& rules, func_decl_ptr_vector& preds) const
 {
     // dvvrd: TODO: this is the moment to push merged pts
     preds.reset();
@@ -1328,7 +1319,7 @@ void pred_transformer::propagate_to_infinity (unsigned level)
 // compute a conjunction of all background facts
 void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
     expr_ref inv(m), tmp1(m), tmp2(m);
-    ptr_vector<func_decl> preds;
+    func_decl_ptr_vector preds;
     for (auto kv : m_pt_rules) {
         expr* tag = kv.m_value->tag();
         datalog::rule const &r = kv.m_value->rule();
@@ -1473,8 +1464,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
             find_predecessors(*r, m_predicates);
             if (m_predicates.empty()) {continue;}
             for (unsigned i = 0; i < m_predicates.size(); i++) {
-                const pred_transformer &pt =
-                    ctx.get_pred_transformer(m_predicates[i]);
+                const pred_transformer &pt = ctx.get_pred_transformer(m_predicates.get(i));
                 if (pt.has_rfs()) {
                     expr_ref a(m);
                     pm.formula_n2o(pt.get_last_rf_tag(), a, i);
@@ -1576,17 +1566,27 @@ bool pred_transformer::is_ctp_blocked(lemma *lem) {
     }
 
     // -- find predicates along the rule
-    // dvvrd: this is the moment to get lemmas for combined symbols!!!
-    find_merged_predecessors(rules, m_predicates);
+    find_predecessors(rules, m_predicates);
 
     // check if any lemma blocks the ctp model
     for (unsigned i = 0, sz = m_predicates.size(); i < sz; ++i) {
-        pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
+        pred_transformer &pt = ctx.get_pred_transformer(m_predicates.get(i));
         expr_ref lemmas(m), val(m);
         lemmas = pt.get_formulas(lem->level());
         pm.formula_n2o(lemmas.get(), lemmas, i);
         if (ctp->is_false(lemmas)) return false;
     }
+// dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// dvvrd: TODO: should we check the lemmas for single predicates or for the merged symbols?
+//    func_decl_ptr_vector preds(m);
+//    for (auto *pred : m_predicates) {
+//        preds.push_back(pred);
+//    }
+//    pred_transformer &pt = ctx.get_pred_transformer(preds);
+//    expr_ref lemmas(m), val(m);
+//    lemmas = pt.get_formulas(lem->level());
+//    pm.formula_n2o(lemmas.get(), lemmas, 0);
+//    if (ctp->is_false(lemmas)) return false;
 
     // lem is blocked by ctp since none of the lemmas at the previous
     // level block ctp
@@ -1703,7 +1703,7 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
 
 // dvvrd: puts into result implications of the form "<rule tag> => fml[a_i]", 
 // where a_i are args of apps of head in the body of rule for current predicate transformer
-void pred_transformer::mk_assumptions(func_decl_ref_vector const& heads, expr* fml,
+void pred_transformer::mk_assumptions(func_decl_ptr_vector const& heads, expr* fml,
                                       expr_ref_vector& result)
 {
     expr_ref tmp1(m), tmp2(m);
@@ -1725,7 +1725,7 @@ void pred_transformer::mk_assumptions(func_decl_ref_vector const& heads, expr* f
     }
 }
 
-void pred_transformer::initialize(decl2rel const& pts)
+void pred_transformer::initialize(decls2rel const& pts)
 {
     m_init = m.mk_false();
     m_transition = m.mk_true();
@@ -1761,7 +1761,7 @@ void pred_transformer::init_rfs ()
     }
 }
 
-void pred_transformer::init_rules(decl2rel const& pts) {
+void pred_transformer::init_rules(decls2rel const& pts) {
     enable_trace("spacer");
     expr_ref_vector transitions(m), not_inits(m);
     app_ref tag(m);
@@ -1813,7 +1813,7 @@ static bool is_all_non_null(app_ref_vector const& apps) {
 }
 #endif
 
-void pred_transformer::init_rule(decl2rel const& pts, datalog::rule const& rule) {
+void pred_transformer::init_rule(decls2rel const& pts, datalog::rule const& rule) {
     scoped_watch _t_(m_initialize_watch);
 
     // Predicates that are variable representatives. Other predicates at
@@ -1896,11 +1896,12 @@ void pred_transformer::ground_free_vars(expr* e, app_ref_vector& vars,
 }
 
 // create names for variables used in relations.
-void pred_transformer::init_atom(decl2rel const &pts, app *atom,
+void pred_transformer::init_atom(decls2rel const &pts, app *atom,
                                  app_ref_vector &var_reprs,
                                  expr_ref_vector &side, unsigned tail_idx) {
     unsigned arity = atom->get_num_args();
-    func_decl* head = atom->get_decl();
+    func_decl_ptr_vector head;
+    head.push_back(atom->get_decl());
     pred_transformer& pt = *pts.find(head);
     for (unsigned i = 0; i < arity; i++) {
         app_ref rep(m);
@@ -1932,7 +1933,7 @@ void pred_transformer::init_atom(decl2rel const &pts, app *atom,
 }
 
 // Adds premises from pts into r.
-void pred_transformer::add_premises(decl2rel const& pts, unsigned lvl, expr_ref_vector& r)
+void pred_transformer::add_premises(decls2rel const& pts, unsigned lvl, expr_ref_vector& r)
 {
     if (lvl == 0) {r.push_back(m_init);}
     else {
@@ -1948,13 +1949,14 @@ void pred_transformer::add_premises(decl2rel const& pts, unsigned lvl, expr_ref_
     }
 }
 
-void pred_transformer::add_premises(decl2rel const& pts, unsigned lvl,
+void pred_transformer::add_premises(decls2rel const& pts, unsigned lvl,
                                     datalog::rule& rule, expr_ref_vector& r)
 {
     find_predecessors(rule, m_predicates);
     for (unsigned i = 0; i < m_predicates.size(); ++i) {
         expr_ref tmp(m);
-        func_decl* head = m_predicates[i];
+        func_decl_ptr_vector head;
+        head.push_back(m_predicates[i]);
         pred_transformer& pt = *pts.find(head);
         expr_ref inv = pt.get_formulas(lvl);
         if (!m.is_true(inv)) {
@@ -2392,7 +2394,29 @@ void context::reset()
     m_inductive_lvl = 0;
 }
 
-void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
+struct func_decl_lt_proc : public std::binary_function<lemma*, lemma *, bool> {
+    bool operator() (func_decl *a, func_decl *b) {
+        return !a || !b || lt(a->get_name(), b->get_name());
+    }
+};
+
+pred_transformer& context::get_pred_transformer(func_decl* p) const
+{
+    func_decl_ptr_vector key;
+    key.push_back(p);
+    return *m_rels.find(key);
+}
+
+pred_transformer& context::get_pred_transformer(func_decl_ptr_vector& p)
+{
+    if (p.size() > 2) {
+        std::sort(p.begin(), p.end(), func_decl_lt_proc());
+    }
+    pred_transformer *pt = m_rels.find(p);
+    return pt == nullptr ? init_merged_pred_transformer(p) : *pt;
+}
+
+void context::init_rules(datalog::rule_set& rules, decls2rel& rels)
 {
     scoped_watch _t_(m_init_rules_watch);
     m_context = &rules.get_context();
@@ -2402,10 +2426,10 @@ void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
              dend = rules.end_grouped_rules(); dit != dend; ++dit) {
         func_decl* pred = dit->m_key;
         TRACE("spacer", tout << mk_pp(pred, m) << "\n";);
-        SASSERT(!rels.contains(pred));
-        func_decl_ref_vector preds(m);
+        func_decl_ptr_vector preds;
         preds.push_back(pred);
-        auto *e = rels.insert_if_not_there2(pred, alloc(pred_transformer, *this,
+        SASSERT(!rels.contains(preds));
+        auto *e = rels.insert_if_not_there2(preds, alloc(pred_transformer, *this,
                                                         get_manager(), preds));
         datalog::rule_vector const& pred_rules = *dit->m_value;
         for (auto rule : pred_rules) {e->get_data().m_value->add_rule(rule);}
@@ -2418,22 +2442,26 @@ void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
         unsigned utz = r->get_uninterpreted_tail_size();
         for (unsigned i = 0; i < utz; ++i) {
             func_decl* pred = r->get_decl(i);
-            func_decl_ref_vector preds(m);
+            func_decl_ptr_vector preds;
             preds.push_back(pred);
-            if (!rels.find(pred, pt)) {
+            if (!rels.find(preds, pt)) {
                 pt = alloc(pred_transformer, *this, get_manager(), preds);
-                rels.insert(pred, pt);
+                rels.insert(preds, pt);
             }
         }
     }
 
     // Initialize use list dependencies
     for (auto &entry : rels) {
-        func_decl* pred = entry.m_key;
+        func_decl_ptr_vector& preds = entry.m_key;
+        SASSERT(preds.size() == 1);
+        func_decl* pred = preds[0];
         pred_transformer* pt = entry.m_value, *pt_user = nullptr;
         for (auto dep : rules.get_dependencies().get_deps(pred)) {
             TRACE("spacer", tout << mk_pp(pred, m) << " " << mk_pp(dep, m) << "\n";);
-            rels.find(dep, pt_user);
+            func_decl_ptr_vector dep_key;
+            dep_key.push_back(dep);
+            rels.find(dep_key, pt_user);
             pt_user->add_use(pt);
         }
     }
@@ -2449,7 +2477,14 @@ void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
     for (auto &entry : rels) {entry.m_value->init_rfs();}
 }
 
-void context::inherit_lemmas(const decl2rel &rels) {
+pred_transformer &context::init_merged_pred_transformer(const func_decl_ptr_vector &preds)
+{
+    SASSERT(false);
+    pred_transformer *pt = alloc(pred_transformer, *this, get_manager(), preds);
+    return *pt;
+}
+
+void context::inherit_lemmas(const decls2rel &rels) {
     for (auto &entry : rels) {
         pred_transformer *pt = nullptr;
         if (m_rels.find(entry.m_key, pt)) {
@@ -2460,7 +2495,7 @@ void context::inherit_lemmas(const decl2rel &rels) {
 
 void context::update_rules(datalog::rule_set& rules)
 {
-    decl2rel rels;
+    decls2rel rels;
     // SMT params must be set before any expression is asserted to any
     // solver
     init_global_smt_params();
@@ -2474,18 +2509,21 @@ void context::update_rules(datalog::rule_set& rules)
     init_lemma_generalizers();
 }
 
-void context::init(const decl2rel &rels) {
+void context::init(const decls2rel &rels) {
     // reset context. Current state is all stored in rels
     reset();
     // re-initialize context
-    for (auto &entry : rels)
-    {m_rels.insert(entry.m_key, entry.m_value);}
+    for (auto &entry : rels) {
+        m_rels.insert(entry.m_key, entry.m_value);
+    }
 }
 
 unsigned context::get_num_levels(func_decl* p)
 {
     pred_transformer* pt = nullptr;
-    if (m_rels.find(p, pt)) {
+    func_decl_ptr_vector key;
+    key.push_back(p);
+    if (m_rels.find(key, pt)) {
         return pt->get_num_levels();
     } else {
         IF_VERBOSE(10, verbose_stream() << "did not find predicate " << p->get_name() << "\n";);
@@ -2496,7 +2534,10 @@ unsigned context::get_num_levels(func_decl* p)
 expr_ref context::get_cover_delta(int level, func_decl* p_orig, func_decl* p)
 {
     pred_transformer* pt = nullptr;
-    if (m_rels.find(p, pt)) {
+    func_decl_ptr_vector key;
+    // dvvrd: TODO: extract information from all pts containing p!
+    key.push_back(p);
+    if (m_rels.find(key, pt)) {
         return pt->get_cover_delta(p_orig, level);
     } else {
         IF_VERBOSE(10, verbose_stream() << "did not find predicate "
@@ -2510,24 +2551,31 @@ void context::add_cover(int level, func_decl* p, expr* property, bool bg)
     scoped_proof _pf_(m);
 
     pred_transformer* pt = nullptr;
-    if (!m_rels.find(p, pt)) {
-        func_decl_ref_vector preds(m);
+    // dvvrd: TODO: add information for all pts containing p!
+    func_decl_ptr_vector key;
+    key.push_back(p);
+    if (!m_rels.find(key, pt)) {
+        func_decl_ptr_vector preds;
         preds.push_back(p);
         pt = alloc(pred_transformer, *this, get_manager(), preds);
-        m_rels.insert(p, pt);
+        m_rels.insert(key, pt);
         IF_VERBOSE(10, verbose_stream() << "did not find predicate "
                    << p->get_name() << "\n";);
     }
-    unsigned lvl = (level == -1)?infty_level():((unsigned)level);
+    unsigned lvl = (level == -1)?infty_level():(static_cast<unsigned>(level));
     pt->add_cover(lvl, property, bg);
 }
 
 void context::add_invariant (func_decl *p, expr *property)
-{add_cover (infty_level(), p, property, use_bg_invs());}
+{add_cover (static_cast<int>(infty_level()), p, property, use_bg_invs());}
 
-expr_ref context::get_reachable(func_decl *p) {
+expr_ref context::get_reachable(func_decl *p)
+{
+    // dvvrd: TODO: extract information from all pts containing p!
     pred_transformer* pt = nullptr;
-    if (!m_rels.find(p, pt))
+    func_decl_ptr_vector key;
+    key.push_back(p);
+    if (!m_rels.find(key, pt))
     { return expr_ref(m.mk_false(), m); }
     return pt->get_reachable();
 }
@@ -2794,7 +2842,7 @@ unsigned context::get_cex_depth()
     }
 
     // treat the following as queues: read from left to right and insert at right
-    ptr_vector<func_decl> preds;
+    func_decl_ptr_vector preds;
     ptr_vector<pred_transformer> pts;
     reach_fact_ref_vector facts;
 
@@ -2823,7 +2871,7 @@ unsigned context::get_cex_depth()
     SASSERT (facts.size () == 1);
     m_query->find_predecessors (*r, preds);
     SASSERT (preds.size () == 1);
-    pts.push_back (&(get_pred_transformer (preds[0])));
+    pts.push_back (&(get_pred_transformer (preds)));
 
     pts.push_back (NULL); // cex depth marker
 
@@ -2848,7 +2896,7 @@ unsigned context::get_cex_depth()
         facts.append (fact->get_justifications ());
         pt->find_predecessors (*r, preds);
         for (unsigned j = 0; j < preds.size (); j++) {
-            pts.push_back (&(get_pred_transformer (preds[j])));
+            pts.push_back (&(get_pred_transformer (preds.get(j))));
         }
     }
 
@@ -2869,7 +2917,7 @@ void context::get_rules_along_trace(datalog::rule_ref_vector& rules)
     }
 
     // treat the following as queues: read from left to right and insert at right
-    ptr_vector<func_decl> preds;
+    func_decl_ptr_vector preds;
     ptr_vector<pred_transformer> pts;
     reach_fact_ref_vector facts;
 
@@ -2900,7 +2948,7 @@ void context::get_rules_along_trace(datalog::rule_ref_vector& rules)
     SASSERT (facts.size () == 1);
     m_query->find_predecessors (*r, preds);
     SASSERT (preds.size () == 1);
-    pts.push_back (&(get_pred_transformer (preds[0])));
+    pts.push_back (&(get_pred_transformer (preds)));
 
     // populate rules according to a preorder traversal of the query derivation tree
     for (unsigned curr = 0; curr < pts.size (); curr++) {
@@ -2917,7 +2965,7 @@ void context::get_rules_along_trace(datalog::rule_ref_vector& rules)
         facts.append (fact->get_justifications ());
         pt->find_predecessors (*r, preds);
         for (unsigned j = 0; j < preds.size (); j++) {
-            pts.push_back (&(get_pred_transformer (preds[j])));
+            pts.push_back (&(get_pred_transformer (preds.get(j))));
         }
     }
 }
@@ -2982,7 +3030,7 @@ expr_ref context::get_ground_sat_answer() const {
 
     // treat the following as queues: read from left to right and insert at the right
     reach_fact_ref_vector reach_facts;
-    ptr_vector<func_decl> preds;
+    func_decl_ptr_vector preds;
     ptr_vector<pred_transformer> pts;
     expr_ref_vector cex (m); // pre-order list of ground instances of predicates
     expr_ref_vector cex_facts (m); // equalities for the ground cex using signature constants
@@ -3008,7 +3056,7 @@ expr_ref context::get_ground_sat_answer() const {
     }
     m_query->find_predecessors (*r, preds);
     SASSERT (preds.size () == 1);
-    pts.push_back (&(get_pred_transformer (preds[0])));
+    pts.push_back (&(get_pred_transformer (preds.get(0))));
     cex_facts.push_back (m.mk_true ());
 
     // XXX a hack to avoid assertion when query predicate is not nullary
@@ -3038,7 +3086,7 @@ expr_ref context::get_ground_sat_answer() const {
         pt->find_predecessors(*r, preds);
 
         for (unsigned j = 0; j < preds.size (); j++) {
-            child_pts.push_back (&(get_pred_transformer (preds[j])));
+            child_pts.push_back (&get_pred_transformer (preds.get(j)));
         }
         // update the queues
         reach_facts.append (child_reach_facts);
@@ -3120,7 +3168,9 @@ lbool context::solve_core (unsigned from_lvl)
 {
     scoped_watch _w_(m_solve_watch);
     //if there is no query predicate, abort
-    if (!m_rels.find(m_query_pred, m_query)) { return l_false; }
+    func_decl_ptr_vector query_key;
+    query_key.push_back(m_query_pred);
+    if (!m_rels.find(query_key, m_query)) { return l_false; }
 
     unsigned lvl = from_lvl;
 
@@ -3737,7 +3787,7 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
     expr_ref res(m);
     reach_fact_ref_vector child_reach_facts;
 
-    ptr_vector<func_decl> preds;
+    func_decl_ptr_vector preds;
     find_predecessors (r, preds);
 
     expr_ref_vector path_cons (m);
@@ -3826,8 +3876,8 @@ bool context::create_children(pob& n,
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
 
-    ptr_vector<func_decl> preds;
-    pt.find_merged_predecessors(rules, preds);
+    func_decl_ptr_vector preds;
+    pt.find_predecessors(rules, preds);
 
     // obtain all formulas to consider for model generalization
     expr_ref_vector forms(m), lits(m);
@@ -3888,6 +3938,7 @@ bool context::create_children(pob& n,
     for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
         unsigned j = kid_order[i];
 
+        // dvvrd: TODO: THIS IS THE MOMENT TO PUSH COMBINED SUMMARIES!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! REWRITE ALL THE SHIT!
         pred_transformer &pt = get_pred_transformer(preds.get(j));
 
         const ptr_vector<app> *aux = nullptr;
@@ -4017,7 +4068,7 @@ bool context::check_invariant(unsigned lvl)
 {
     for (auto &entry : m_rels) {
         checkpoint();
-        if (!check_invariant(lvl, entry.m_key)) {
+        if (!check_invariant(lvl, *entry.m_value)) {
             return false;
         }
     }
@@ -4026,10 +4077,9 @@ bool context::check_invariant(unsigned lvl)
 
 // MAKES QUERY
 // USED ONLY FOR VALIDATION?
-bool context::check_invariant(unsigned lvl, func_decl* fn)
+bool context::check_invariant(unsigned lvl, pred_transformer& pt)
 {
     ref<solver> ctx = mk_smt_solver(m, params_ref::get_empty(), symbol::null);
-    pred_transformer& pt = *m_rels.find(fn);
     expr_ref_vector conj(m);
     expr_ref inv = pt.get_formulas(next_level(lvl));
     if (m.is_true(inv)) { return true; }
@@ -4051,15 +4101,18 @@ void context::add_constraint (expr *c, unsigned level)
         expr *e1, *e2;
         if (m.is_implies(c, e1, e2)) {
             SASSERT (is_app (e1));
-            pred_transformer *r = nullptr;
-            if (m_rels.find (to_app (e1)->get_decl (), r)){
-                lemma_ref lem = alloc(lemma, m, e2, level);
-                lem.get()->set_external(true);
-                if (r->add_lemma(lem.get())) {
-                    this->m_stats.m_num_lemmas_imported++;
+            // dvvrd: TODO: add information for all pts containing this decl!
+            func_decl *d = to_app (e1)->get_decl ();
+            for (auto &entry : m_rels) {
+                if (entry.m_key.contains(d)) {
+                    lemma_ref lem = alloc(lemma, m, e2, level);
+                    lem.get()->set_external(true);
+                    if (entry.m_value->add_lemma(lem.get())) {
+                        this->m_stats.m_num_lemmas_imported++;
+                    }
+                    else{
+                        this->m_stats.m_num_lemmas_discarded++;
                 }
-                else{
-                    this->m_stats.m_num_lemmas_discarded++;
             }
         }
     }

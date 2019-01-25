@@ -49,6 +49,28 @@ class derivation;
 class pob_queue;
 class context;
 
+
+struct func_decl_ptr_vector_hash : public vector_hash_tpl<obj_ptr_hash<func_decl>, ptr_vector<func_decl> > {};
+
+template<typename T>
+struct ptr_vector_eq {
+    bool operator()(ptr_vector<T> const& v1, ptr_vector<T> const& v2) const {
+        if (v1.size() != v2.size()) {
+            return false;
+        }
+        for (unsigned i = 0; i < v1.size(); ++i) {
+            if (v1[i] != v2[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+typedef ptr_vector<func_decl> func_decl_ptr_vector;
+typedef ptr_vector_eq<func_decl> func_decl_ptr_vector_eq;
+typedef map<func_decl_ptr_vector, pred_transformer*, func_decl_ptr_vector_hash, func_decl_ptr_vector_eq> decls2rel;
+
 typedef obj_map<datalog::rule const, app_ref_vector*> rule2inst;
 typedef obj_map<func_decl, pred_transformer*> decl2rel;
 typedef obj_map<func_decl, app*> decl2app;
@@ -389,9 +411,9 @@ class pred_transformer {
     ast_manager&                 m;                 // ast_manager
     context&                     ctx;               // spacer::context
 
-    func_decl_ref_vector         m_heads;           // predicates
+    func_decl_ptr_vector         m_heads;           // predicates
     symbol                       m_name;            // name
-    func_decl_ref_vector         m_sig;             // signature
+    func_decl_ptr_vector         m_sig;             // signature
     func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;           // pt rules used to derive transformer
@@ -407,7 +429,7 @@ class pred_transformer {
     expr_ref                     m_init;            // initial condition
     decl2app                     m_extend_lits;     // current literal to extend initial state
     bool                         m_all_init;        // true if the pt has no uninterpreted body in any rule
-    ptr_vector<func_decl>        m_predicates;      // temp vector used with find_predecessors()
+    func_decl_ptr_vector         m_predicates;      // temp vector used with find_predecessors()
     stats                        m_stats;
     stopwatch                    m_initialize_watch;
     stopwatch                    m_must_reachable_watch;
@@ -422,17 +444,17 @@ class pred_transformer {
     void add_lemma_from_child (pred_transformer &child, lemma *lemma,
                                unsigned lvl, bool ground_only = false);
 
-    void mk_assumptions(func_decl_ref_vector const& heads, expr* fml, expr_ref_vector& result);
+    void mk_assumptions(func_decl_ptr_vector const& heads, expr* fml, expr_ref_vector& result);
 
     // Initialization
-    void init_rules(decl2rel const& pts);
-    void init_rule(decl2rel const& pts, datalog::rule const& rule);
-    void init_atom(decl2rel const& pts, app * atom, app_ref_vector& var_reprs,
+    void init_rules(decls2rel const& pts);
+    void init_rule(decls2rel const& pts, datalog::rule const& rule);
+    void init_atom(decls2rel const& pts, app * atom, app_ref_vector& var_reprs,
                    expr_ref_vector& side, unsigned tail_idx);
 
     void simplify_formulas(tactic& tac, expr_ref_vector& fmls);
 
-    void add_premises(decl2rel const& pts, unsigned lvl, datalog::rule& rule, expr_ref_vector& r);
+    void add_premises(decls2rel const& pts, unsigned lvl, datalog::rule& rule, expr_ref_vector& r);
 
     app_ref mk_fresh_rf_tag (func_decl *head);
 
@@ -442,7 +464,7 @@ class pred_transformer {
     const lemma_ref_vector &get_bg_invs() const {return m_frames.get_bg_invs();}
 
 public:
-    pred_transformer(context& ctx, manager& pm, func_decl_ref_vector const& heads);
+    pred_transformer(context& ctx, manager& pm, func_decl_ptr_vector const& heads);
     ~pred_transformer() { for (auto &entry : m_extend_lits) m.dec_ref(entry.m_value); }
 
     inline bool use_native_mbp ();
@@ -452,16 +474,16 @@ public:
         }
         return nullptr;
     }
-    void find_predecessors(datalog::rule const& r, ptr_vector<func_decl>& predicates) const;
-    void find_merged_predecessors(ptr_vector<const datalog::rule> const& rules, ptr_vector<func_decl>& predicates) const;
+    void find_predecessors(datalog::rule const& r, func_decl_ptr_vector& predicates) const;
+    void find_predecessors(ptr_vector<const datalog::rule> const& rules, func_decl_ptr_vector& predicates) const;
 
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
-    void initialize(decl2rel const& pts);
+    void initialize(decls2rel const& pts);
     static pred_transformer* merge(ptr_vector<pred_transformer> const& pts);
 
     symbol const& name() const {return m_name;}
-    func_decl_ref_vector const& heads() const {return m_heads;}
+    func_decl_ptr_vector const& heads() const {return m_heads;}
     func_decl* merged_head() const {return m_merged_head;};
     ptr_vector<datalog::rule> const& rules() const {return m_rules;}
     func_decl* sig(unsigned i) const {return m_sig[i];} // signature
@@ -578,7 +600,7 @@ public:
     manager& get_manager() const {return pm;}
     ast_manager& get_ast_manager() const {return m;}
 
-    void add_premises(decl2rel const& pts, unsigned lvl, expr_ref_vector& r);
+    void add_premises(decls2rel const& pts, unsigned lvl, expr_ref_vector& r);
 
     void inherit_lemmas(pred_transformer& other);
 
@@ -949,7 +971,7 @@ class context {
 
     random_gen           m_random;
     spacer_children_order m_children_order;
-    decl2rel             m_rels;         // Map from relation predicate to fp-operator.
+    decls2rel            m_rels;         // Map from relation predicates to fp-operator.
     func_decl_ref        m_query_pred;
     pred_transformer*    m_query;
     mutable pob_queue    m_pob_queue;
@@ -1034,15 +1056,16 @@ class context {
     // Initialization
     void init_lemma_generalizers();
     void reset_lemma_generalizers();
-    void inherit_lemmas(const decl2rel& rels);
+    void inherit_lemmas(const decls2rel& rels);
     void init_global_smt_params();
-    void init_rules(datalog::rule_set& rules, decl2rel& transformers);
+    void init_rules(datalog::rule_set& rules, decls2rel& transformers);
+    pred_transformer &init_merged_pred_transformer(func_decl_ptr_vector const& preds);
     // (re)initialize context with new relations
-    void init(const decl2rel &rels);
+    void init(const decls2rel &rels);
 
     bool validate();
     bool check_invariant(unsigned lvl);
-    bool check_invariant(unsigned lvl, func_decl* fn);
+    bool check_invariant(unsigned lvl, pred_transformer& pt);
 
     void checkpoint();
 
@@ -1080,8 +1103,8 @@ public:
 
     ast_manager&      get_ast_manager() const {return m;}
     manager&          get_manager() {return m_pm;}
-    decl2rel const&   get_pred_transformers() const {return m_rels;}
-    pred_transformer& get_pred_transformer(func_decl* p) const {return *m_rels.find(p);}
+    pred_transformer& get_pred_transformer(func_decl* p) const;
+    pred_transformer& get_pred_transformer(func_decl_ptr_vector& p);
 
     datalog::context& get_datalog_context() const {
         SASSERT(m_context); return *m_context;
