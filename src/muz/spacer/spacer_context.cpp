@@ -728,7 +728,7 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ptr_vect
     m_reach_solver (ctx.mk_solver2()),
     m_pobs(*this),
     m_frames(*this),
-    m_reach_facts(), m_rf_init_sz(0),
+    m_reach_facts(),
     m_transition_clause(m), m_transition(m), m_init(m),
     m_all_init(false)
 {
@@ -864,6 +864,10 @@ bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
     return (res == l_true);
 }
 
+pt_collection pred_transformer::subsumers()
+{
+    return ctx.subsumers(*this);
+}
 
 
 
@@ -1026,12 +1030,21 @@ void pred_transformer::add_lemma_core(lemma* lemma, bool ground_only)
 
     if (is_infty_level(lvl)) { m_stats.m_num_invariants++; }
 
+    // dvvrd: TODO: propagation to subsumers should happen ONLY here! DO NOT CALL add_lemma_core recursively!
+    // dvvrd: TODO: moreover, merging pts should reuse this code somehow!
     if (lemma->is_ground()) {
-        if (is_infty_level(lvl)) {STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "]: asserting ground infinite level lemma " << mk_pp(l, m) << "\n";); m_solver->assert_expr(l); }
-        else {
+        if (is_infty_level(lvl)) {
+            m_solver->assert_expr(l);
+            for (pred_transformer *pt : subsumers()) {
+                pt->m_solver->assert_expr(l);
+            }
+        } else {
             ensure_level (lvl);
-            STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "]: asserting ground level " << lvl << " lemma " << mk_pp(l, m) << "\n";);
             m_solver->assert_expr (l, lvl);
+            for (pred_transformer *pt : subsumers()) {
+                pt->ensure_level (lvl);
+                pt->m_solver->assert_expr (l, lvl);
+            }
         }
     }
 
@@ -1046,6 +1059,7 @@ bool pred_transformer::add_lemma (expr *e, unsigned lvl, bool bg) {
     return m_frames.add_lemma(lem.get());
 }
 
+// dvvrd: this is the moment forming fast [|\beta_P|]_{\sigma}!
 void pred_transformer::add_lemma_from_child (pred_transformer& child,
                                              lemma* lemma, unsigned lvl,
                                              bool ground_only)
@@ -1135,7 +1149,6 @@ void pred_transformer::add_rf (reach_fact *rf)
 
     // add to m_reach_facts
     m_reach_facts.push_back (rf);
-    if (rf->is_init()) {m_rf_init_sz++;}
 
     // update m_reach_solver
     if (last_tag) {fml = m.mk_or(m.mk_not(last_tag), rf->get(), rf->tag());}
@@ -1703,6 +1716,7 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
 
 // dvvrd: puts into result implications of the form "<rule tag> => fml[a_i]", 
 // where a_i are args of apps of head in the body of rule for current predicate transformer
+// dvvrd: I KNOW WHAT TO DO! we should find out in which combinations of clauses "heads" are included (as body apps) and create assumptions of the form "<r_1 & .. & r_n> => fml[a_i]"
 void pred_transformer::mk_assumptions(func_decl_ptr_vector const& heads, expr* fml,
                                       expr_ref_vector& result)
 {
@@ -1746,6 +1760,42 @@ void pred_transformer::initialize(decls2rel const& pts)
 
 }
 
+void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
+{
+    std::cout << "pred_transformer::merge( ";
+    for (auto *pt : pts) {
+        std::cout << pt->name() << " ";
+    }
+    std::cout << ")\n";
+    std::cout.flush();std::cout.flush();std::cout.flush();std::cout.flush();std::cout.flush();
+    ptr_vector<frames> frames;
+    expr_ref_vector transition(m);
+    expr_ref_vector init(m);
+    m_all_init = true;
+    // dvvrd: TODO: init m_use effectively! this may be a bottleneck!
+    // dvvrd: TODO: ensure that context::m_rels has key of this transformer before calling merge()! otherwise we'll not detect recursive calls of this pt.
+    // dvvrd: TODO: honestly merge solver states
+    for (pred_transformer *pt : pts) {
+        m_rules.append(pt->m_rules);
+        frames.push_back(&pt->m_frames);
+        m_reach_facts.append(pt->m_reach_facts);
+        transition.push_back(pt->m_transition);
+        init.push_back(pt->m_init);
+        m_transition_clause.append(pt->m_transition_clause);
+        m_all_init &= pt->m_all_init;
+    }
+    m_frames.merge(frames);
+    flatten_and(transition);
+    flatten_and(init);
+    m_transition = mk_and(transition);
+    m_init = mk_and(init);
+    std::cout << "transition: " << mk_pp(m_transition, m);
+    std::cout << "init: " << mk_pp(m_init, m);
+    std::cout << "transition_clause: " << m_transition_clause;
+    std::cout << "\n";
+ //    SASSERT(false);
+}
+
 void pred_transformer::init_rfs ()
 {
     expr_ref_vector v(m);
@@ -1779,8 +1829,6 @@ void pred_transformer::init_rules(decls2rel const& pts) {
         for (auto &entry : m_extend_lits) {
             m_transition_clause.push_back(entry.m_value->get_arg(0));
         }
-        // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // dvvrd: TODO: hack. should calculate cartesian product of rules or at least group them by heads
         for (auto *head : m_heads) {
             for (auto &kv : m_pt_rules) {
                 pt_rule &r = *kv.m_value;
@@ -1795,6 +1843,8 @@ void pred_transformer::init_rules(decls2rel const& pts) {
         }
 
         if (!ctx.use_inc_clause()) {
+            // dvvrd: TODO: it seems that we encode clauses R1, R2 into "(t1 => R1) & (t2 => R_1) & (t_1 | t_2)"
+            // dvvrd: in this case in multi-head variant we should generate tag disj like "...  & (t_1 | t_2) & (s_1 | s_2)"
             transitions.push_back(mk_or(m_transition_clause));
             m_transition_clause.reset();
         }
@@ -2144,6 +2194,16 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
     return all;
 }
 
+void pred_transformer::frames::merge(const ptr_vector<frames> &fs)
+{
+//    std::cout << "\nMERGING FRAMES\n";
+//    for (frames *f : fs) {
+//        std::cout << f->m_pt.name()
+//                  << "; lemmas: " << f->m_lemmas.size()
+//                  << "; bg: " << f->m_bg_invs.size() << std::endl;
+//    }
+}
+
 void pred_transformer::frames::simplify_formulas ()
 {
     // number of subsumed lemmas
@@ -2302,6 +2362,22 @@ pob* pred_transformer::pob_manager::find_pob(pob* parent, expr *post) {
 // ----------------
 // context
 
+comparison_result pt_subsumption_comparator::operator()(const pred_transformer &pt1, const pred_transformer &pt2) {
+    const func_decl_ptr_vector &small = pt1.heads().size() <= pt2.heads().size() ? pt1.heads() : pt2.heads();
+    const func_decl_ptr_vector &large = pt1.heads().size() <= pt2.heads().size() ? pt2.heads() : pt1.heads();
+    unsigned i = 0, sz = small.size();
+    for (unsigned j = 0; i < sz && j < large.size() - sz + i + 1; ++j) {
+        if (small[i] == large[j]) ++i;
+    }
+    return i < small.size()
+            ? comparison_result::incomparable
+            : (small.size() == large.size()
+                ? comparison_result::equal
+                : (pt1.heads().size() < pt2.heads().size()
+                    ? comparison_result::lt
+                    : comparison_result::gt));
+}
+
 context::context(fp_params const& params, ast_manager& m) :
     m_params(params),
     m(m),
@@ -2412,11 +2488,16 @@ pred_transformer& context::get_pred_transformer(func_decl_ptr_vector& p)
     if (p.size() > 2) {
         std::sort(p.begin(), p.end(), func_decl_lt_proc());
     }
-    pred_transformer *pt = m_rels.find(p);
-    return pt == nullptr ? init_merged_pred_transformer(p) : *pt;
+    auto *e = m_rels.find_core(p);
+    return e ? *e->get_data().m_value : init_merged_pred_transformer(p);
 }
 
-void context::init_rules(datalog::rule_set& rules, decls2rel& rels)
+pt_collection context::subsumers(pred_transformer &pt)
+{
+    return m_pt_subsumptions.greater_elements(pt);
+}
+
+void context::init_rules(const datalog::rule_set& rules, decls2rel& rels)
 {
     scoped_watch _t_(m_init_rules_watch);
     m_context = &rules.get_context();
@@ -2462,6 +2543,7 @@ void context::init_rules(datalog::rule_set& rules, decls2rel& rels)
             func_decl_ptr_vector dep_key;
             dep_key.push_back(dep);
             rels.find(dep_key, pt_user);
+            std::cout << "=======================================\n" << pt->name() << " is using " << pt_user->name() << "=======================================\n";
             pt_user->add_use(pt);
         }
     }
@@ -2479,8 +2561,19 @@ void context::init_rules(datalog::rule_set& rules, decls2rel& rels)
 
 pred_transformer &context::init_merged_pred_transformer(const func_decl_ptr_vector &preds)
 {
-    SASSERT(false);
     pred_transformer *pt = alloc(pred_transformer, *this, get_manager(), preds);
+    ptr_vector<pred_transformer> pts;
+    std::cout << "init_merged_pred_transformer(";
+    for (auto *h : preds) {
+        std::cout << h->get_name() << " ";
+    }
+    std::cout << ")\n";
+    // dvvrd: TODO: split preds by larger groups
+    for (auto *pred : preds) {
+        pts.push_back(&get_pred_transformer(pred));
+    }
+    m_pt_subsumptions.insert(*pt);
+//    pt->merge(pts);
     return *pt;
 }
 
@@ -2502,6 +2595,8 @@ void context::update_rules(datalog::rule_set& rules)
     // constructs new pred transformers and asserts trans and init
     init_rules(rules, rels);
     // inherits lemmas from m_rels into rels
+    // dvvrd: TODO: lemmas would be lost! not all lemmas would be inherited!
+    // dvvrd: m_rels are going to be resetted after this, but combined transformers are not yet discovered!
     inherit_lemmas(rels);
     // switch context to new rels
     init(rels);
@@ -3389,8 +3484,9 @@ bool context::is_reachable(pob &n)
     // -- update must summary
     for (auto *r : rules) {
         if (r && r->get_uninterpreted_tail_size () > 0) {
-            reach_fact_ref rf = n.pt().mk_rf (n, *mdl, *r);
-            n.pt ().add_rf (rf.get ());
+            pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+            reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r);
+            rf_pt.add_rf (rf.get ());
         }
     }
 
@@ -3536,9 +3632,10 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             is_concretely_reachable &= is_concrete[i];
             if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
                 // -- update must summary
-                reach_fact_ref rf = n.pt().mk_rf (n, *model, *r);
+                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r);
                 checkpoint ();
-                n.pt ().add_rf (rf.get ());
+                rf_pt.add_rf (rf.get ());
                 checkpoint ();
             }
         }
@@ -3924,6 +4021,8 @@ bool context::create_children(pob& n,
 
     derivation *deriv = alloc(derivation, n, phi, vars);
 
+    get_pred_transformer(preds);
+///// ----- begin of old code -------
     // pick an order to process children
     unsigned_vector kid_order;
     kid_order.resize(preds.size(), 0);
@@ -3949,11 +4048,27 @@ bool context::create_children(pob& n,
             dealloc(deriv);
             return false;
         }
-        // dvvrd: to aviod projecting vars of other apps just do not add it into premise (see create_next_child)?
+        // dvvrd: to avoid projecting vars of other apps just do not add it into premise (see create_next_child)?
         STRACE("spacer",
                tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
         deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
     }
+///// ----- end of old code -------
+
+//    pred_transformer &pt = get_pred_transformer(preds);
+
+//    const ptr_vector<app> *aux = nullptr;
+//    expr_ref sum(m);
+//    sum = pt.get_origin_summary (mdl, prev_level(n.level()),
+//                                 j, reach_pred_used[j], &aux);
+//    if (!sum) {
+//        dealloc(deriv);
+//        return false;
+//    }
+//    // dvvrd: to avod projecting vars of other apps just do not add it into premise (see create_next_child)?
+//    STRACE("spacer",
+//           tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
+//    deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
 
     // create post for the first child and add to queue
     pob* kid = deriv->create_first_child (mdl);

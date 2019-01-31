@@ -28,6 +28,7 @@ Notes:
 #undef max
 #endif
 #include <queue>
+#include "util/poset.h"
 #include "util/scoped_ptr_vector.h"
 #include "muz/spacer/spacer_manager.h"
 #include "muz/spacer/spacer_prop_solver.h"
@@ -83,6 +84,12 @@ typedef sref_buffer<pob> pob_ref_buffer;
 class reach_fact;
 typedef ref<reach_fact> reach_fact_ref;
 typedef sref_vector<reach_fact> reach_fact_ref_vector;
+
+struct pt_subsumption_comparator {
+    comparison_result operator()(const pred_transformer &pt1, const pred_transformer &pt2);
+};
+typedef poset<pred_transformer, pt_subsumption_comparator> pt_poset;
+typedef pt_poset::comparable_item_collection pt_collection;
 
 class reach_fact {
     unsigned m_ref_count;
@@ -171,26 +178,26 @@ public:
     void reset_ctp() {m_ctp.reset();}
 
     void bump() {m_bumped++;}
-    unsigned get_bumped() {return m_bumped;}
+    unsigned get_bumped() const {return m_bumped;}
 
     expr *get_expr();
     bool is_false();
     expr_ref_vector const &get_cube();
     void update_cube(pob_ref const &p, expr_ref_vector &cube);
 
-    bool has_pob() {return m_pob;}
+    bool has_pob() const {return m_pob;}
     pob_ref &get_pob() {return m_pob;}
-    unsigned weakness() {return m_weakness;}
+    unsigned weakness() const {return m_weakness;}
 
     void add_skolem(app *zk, app* b);
 
     void set_external(bool ext){m_external = ext;}
-    bool external() { return m_external;}
+    bool external() const { return m_external;}
 
     void set_background(bool v) {m_background = v;}
-    bool is_background() {return m_background;}
+    bool is_background() const {return m_background;}
 
-    bool is_blocked() {return m_blocked;}
+    bool is_blocked() const {return m_blocked;}
     void set_blocked(bool v) {m_blocked=v;}
 
     bool is_inductive() const {return is_infty_level(m_lvl);}
@@ -308,6 +315,8 @@ class pred_transformer {
         bool add_lemma (lemma *new_lemma);
         void propagate_to_infinity (unsigned level);
         bool propagate_to_next_level (unsigned level);
+
+        void merge(const ptr_vector<frames> &pts);
     };
 
     /**
@@ -423,7 +432,6 @@ class pred_transformer {
     pob_manager                         m_pobs;            // proof obligations created so far
     frames                       m_frames;          // frames with lemmas
     reach_fact_ref_vector        m_reach_facts;     // reach facts
-    unsigned                     m_rf_init_sz;      // number of reach fact from INIT
     expr_ref_vector              m_transition_clause; // extra clause for trans
     expr_ref                     m_transition;      // transition relation
     expr_ref                     m_init;            // initial condition
@@ -480,7 +488,7 @@ public:
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
     void initialize(decls2rel const& pts);
-    static pred_transformer* merge(ptr_vector<pred_transformer> const& pts);
+    void merge(ptr_vector<pred_transformer> const& pts);
 
     symbol const& name() const {return m_name;}
     func_decl_ptr_vector const& heads() const {return m_heads;}
@@ -499,6 +507,7 @@ public:
     expr_ref get_cover_delta(func_decl* p_orig, int level);
     void     add_cover(unsigned level, expr* property, bool bg = false);
     expr_ref get_reachable();
+    pt_collection subsumers();
 
     std::ostream& display(std::ostream& strm) const;
 
@@ -934,7 +943,6 @@ enum spacer_children_order {
 };
 
 class context {
-
     struct stats {
         unsigned m_num_queries;
         unsigned m_num_reuse_reach;
@@ -972,6 +980,7 @@ class context {
     random_gen           m_random;
     spacer_children_order m_children_order;
     decls2rel            m_rels;         // Map from relation predicates to fp-operator.
+    pt_poset             m_pt_subsumptions;
     func_decl_ref        m_query_pred;
     pred_transformer*    m_query;
     mutable pob_queue    m_pob_queue;
@@ -1058,7 +1067,7 @@ class context {
     void reset_lemma_generalizers();
     void inherit_lemmas(const decls2rel& rels);
     void init_global_smt_params();
-    void init_rules(datalog::rule_set& rules, decls2rel& transformers);
+    void init_rules(const datalog::rule_set& rules, decls2rel& transformers);
     pred_transformer &init_merged_pred_transformer(func_decl_ptr_vector const& preds);
     // (re)initialize context with new relations
     void init(const decls2rel &rels);
@@ -1105,6 +1114,7 @@ public:
     manager&          get_manager() {return m_pm;}
     pred_transformer& get_pred_transformer(func_decl* p) const;
     pred_transformer& get_pred_transformer(func_decl_ptr_vector& p);
+    pt_collection subsumers(pred_transformer &pt);
 
     datalog::context& get_datalog_context() const {
         SASSERT(m_context); return *m_context;
