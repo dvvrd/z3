@@ -116,6 +116,10 @@ public:
     {m_mux.shift_expr(result.get(), n_index(), o_index(o_idx),
                         result, homogenous);}
 
+    void formula_n2o(expr * f, expr_ref & result, const sym_mux::idx_subst &o_idcs,
+                     bool homogenous = true) const
+    {m_mux.shift_expr(f, n_index(), o_idcs, result, homogenous);}
+
     void formula_o2o(expr * src, expr_ref & tgt, unsigned src_idx,
                      unsigned tgt_idx, bool homogenous = true) const
     {m_mux.shift_expr(src, o_index(src_idx), o_index(tgt_idx),

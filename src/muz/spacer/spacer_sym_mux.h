@@ -49,6 +49,8 @@ private:
     void ensure_capacity(sym_mux_entry &entry, unsigned sz) const;
 
 public:
+    typedef obj_map<func_decl, unsigned> idx_subst;
+
     sym_mux(ast_manager & m);
     ~sym_mux();
     ast_manager & get_manager() const { return m; }
@@ -87,6 +89,14 @@ public:
     void shift_expr(expr * f, unsigned src_idx, unsigned tgt_idx,
                     expr_ref & res, bool homogenous = true) const;
 
+    /**
+      \brief Convert src_idx symbols in formula f variant into
+      tgt_idx[sym]. Formula cannot contain symbols
+      of other variants than src_idx.  If homogenous is true, formula cannot contain symbols
+      of other variants.
+    */
+    void shift_expr(expr * f, unsigned src_idx, const idx_subst & tgt_idcs,
+                    expr_ref & res, bool homogenous = true) const;
 
 };
 }

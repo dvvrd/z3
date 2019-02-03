@@ -129,6 +129,7 @@ struct conv_rewriter_cfg : public default_rewriter_cfg {
 private:
     ast_manager & m;
     const sym_mux & m_parent;
+    const sym_mux::idx_subst *m_subst;
     unsigned m_from_idx;
     unsigned m_to_idx;
     bool m_homogenous;
@@ -138,8 +139,18 @@ public:
                       unsigned to_idx, bool homogenous)
         : m(parent.get_manager()),
           m_parent(parent),
+          m_subst(nullptr),
           m_from_idx(from_idx),
           m_to_idx(to_idx),
+          m_homogenous(homogenous), m_pinned(m) {(void) m_homogenous;}
+
+    conv_rewriter_cfg(const sym_mux & parent, unsigned from_idx,
+                      const sym_mux::idx_subst &tgt_idcs, bool homogenous)
+        : m(parent.get_manager()),
+          m_parent(parent),
+          m_subst(&tgt_idcs),
+          m_from_idx(from_idx),
+          m_to_idx(0),
           m_homogenous(homogenous), m_pinned(m) {(void) m_homogenous;}
 
     bool get_subst(expr * s, expr * & t, proof * & t_pr)
@@ -151,7 +162,8 @@ public:
             SASSERT(!m_homogenous || !m_parent.is_muxed(sym));
             return false;
         }
-        func_decl * tgt = m_parent.shift_decl(sym, m_from_idx, m_to_idx);
+        unsigned tgt_idx = m_subst ? m_subst->find(sym) : m_to_idx;
+        func_decl * tgt = m_parent.shift_decl(sym, m_from_idx, tgt_idx);
         t = m.mk_app(tgt, a->get_args());
         m_pinned.push_back(t);
         return true;
@@ -167,4 +179,11 @@ void sym_mux::shift_expr(expr * f, unsigned src_idx, unsigned tgt_idx,
         rewriter_tpl<conv_rewriter_cfg> rwr(m, false, r_cfg);
         rwr(f, res);
     }
+}
+
+void sym_mux::shift_expr(expr * f, unsigned src_idx, const idx_subst & tgt_idcs,
+                         expr_ref & res, bool homogenous) const {
+    conv_rewriter_cfg r_cfg(*this, src_idx, tgt_idcs, homogenous);
+    rewriter_tpl<conv_rewriter_cfg> rwr(m, false, r_cfg);
+    rwr(f, res);
 }
