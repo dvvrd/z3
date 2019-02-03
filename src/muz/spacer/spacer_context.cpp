@@ -817,7 +817,7 @@ void pred_transformer::reset_statistics()
 void pred_transformer::init_sig()
 {
     // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // dvvrd: TODO: multiplex args if there are to identical heads
+    // dvvrd: TODO: multiplex args if there are two identical heads
     // dvvrd: probably it is enough to put number of head into name_stm
     ptr_vector<sort> domain;
     for (auto *head : m_heads) {
@@ -974,7 +974,6 @@ void pred_transformer::find_predecessors(datalog::rule const& r, func_decl_ptr_v
 
 void pred_transformer::find_predecessors(ptr_vector<const datalog::rule> const& rules, func_decl_ptr_vector& preds) const
 {
-    // dvvrd: TODO: this is the moment to push merged pts
     preds.reset();
     for (auto *r : rules) {
         unsigned tail_sz = r->get_uninterpreted_tail_size();
@@ -1030,8 +1029,7 @@ void pred_transformer::add_lemma_core(lemma* lemma, bool ground_only)
 
     if (is_infty_level(lvl)) { m_stats.m_num_invariants++; }
 
-    // dvvrd: TODO: propagation to subsumers should happen ONLY here! DO NOT CALL add_lemma_core recursively!
-    // dvvrd: TODO: moreover, merging pts should reuse this code somehow!
+    // dvvrd: TODO: merging pts should reuse this code somehow!
     if (lemma->is_ground()) {
         if (is_infty_level(lvl)) {
             m_solver->assert_expr(l);
@@ -1059,7 +1057,6 @@ bool pred_transformer::add_lemma (expr *e, unsigned lvl, bool bg) {
     return m_frames.add_lemma(lem.get());
 }
 
-// dvvrd: this is the moment forming fast [|\beta_P|]_{\sigma}!
 void pred_transformer::add_lemma_from_child (pred_transformer& child,
                                              lemma* lemma, unsigned lvl,
                                              bool ground_only)
@@ -1071,8 +1068,8 @@ void pred_transformer::add_lemma_from_child (pred_transformer& child,
     for (unsigned i = 0; i < fmls.size(); ++i) {
         expr_ref_vector inst(m);
         expr* a = to_app(fmls.get(i))->get_arg(0);
-        expr* l = to_app(fmls.get(i))->get_arg(1);
         if (!lemma->is_ground() && get_context().use_instantiate()) {
+            expr* l = to_app(fmls.get(i))->get_arg(1);
             expr_ref grnd_lemma(m);
             app_ref_vector tmp(m);
             lemma->mk_insts(inst, l);
@@ -1760,40 +1757,130 @@ void pred_transformer::initialize(decls2rel const& pts)
 
 }
 
+void pred_transformer::subsume_lemmas(const pt_collection &subsumed_pts)
+{
+    for (pred_transformer *subsumed_pt : subsumed_pts) {
+        for (lemma *lemma : subsumed_pt->m_frames.lemmas()) {
+            if (lemma->is_ground()) {
+                // dvvrd: TODO: remove copy/paste from add_lemma_core
+                unsigned lvl = lemma->level();
+                if (is_infty_level(lvl)) {
+                    m_solver->assert_expr(lemma->get_expr());
+                } else {
+                    ensure_level (lvl);
+                    m_solver->assert_expr (lemma->get_expr(), lvl);
+                }
+            }
+        }
+    }
+}
+
 void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
 {
-    std::cout << "pred_transformer::merge( ";
-    for (auto *pt : pts) {
-        std::cout << pt->name() << " ";
-    }
-    std::cout << ")\n";
-    std::cout.flush();std::cout.flush();std::cout.flush();std::cout.flush();std::cout.flush();
-    ptr_vector<frames> frames;
+    // dvvrd: TODO: trace it baby
     expr_ref_vector transition(m);
     expr_ref_vector init(m);
     m_all_init = true;
-    // dvvrd: TODO: init m_use effectively! this may be a bottleneck!
-    // dvvrd: TODO: ensure that context::m_rels has key of this transformer before calling merge()! otherwise we'll not detect recursive calls of this pt.
-    // dvvrd: TODO: honestly merge solver states
     for (pred_transformer *pt : pts) {
         m_rules.append(pt->m_rules);
-        frames.push_back(&pt->m_frames);
         m_reach_facts.append(pt->m_reach_facts);
         transition.push_back(pt->m_transition);
         init.push_back(pt->m_init);
         m_transition_clause.append(pt->m_transition_clause);
         m_all_init &= pt->m_all_init;
+        m_frames.inherit_bg_invs(pt->m_frames);
     }
-    m_frames.merge(frames);
     flatten_and(transition);
     flatten_and(init);
     m_transition = mk_and(transition);
     m_init = mk_and(init);
-    std::cout << "transition: " << mk_pp(m_transition, m);
-    std::cout << "init: " << mk_pp(m_init, m);
-    std::cout << "transition_clause: " << m_transition_clause;
-    std::cout << "\n";
- //    SASSERT(false);
+
+    m_solver->assert_expr (m_transition);
+    m_solver->assert_expr (m_init, 0);
+}
+
+
+typedef obj_map<func_decl, unsigned> func_decl_multiset;
+
+void get_body_decls_set(const ptr_vector<datalog::rule> &rules, func_decl_multiset &result)
+{
+    for (datalog::rule *r : rules) {
+        for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i) {
+            func_decl *decl = r->get_tail(i)->get_decl();
+            auto *e = result.find_core(decl);
+            if (e) {
+                ++e->get_data().m_value;
+            } else {
+                result.insert(decl, 1);
+            }
+        }
+    }
+}
+
+bool multiset_contains(const func_decl_multiset &body, func_decl *elem, unsigned count)
+{
+    auto *e = body.find_core(elem);
+    return e ? e->get_data().m_value >= count : count == 0;
+}
+
+bool covers(const func_decl_multiset &body, const ptr_vector<func_decl> &sorted_decls)
+{
+    if (sorted_decls.empty()) {
+        return true;
+    }
+    func_decl *prev = nullptr;
+    unsigned counter = 0;
+    for (func_decl *curr : sorted_decls) {
+        if (curr != prev && prev) {
+            if (!multiset_contains(body, prev, counter)) {
+                return false;
+            }
+            counter = 0;
+        }
+        ++counter;
+        prev = curr;
+    }
+    return multiset_contains(body, prev, counter);
+}
+
+void pred_transformer::merge_child_lemmas(const decls2rel &rels)
+{
+    // Computing exact set of users can be shown to be NP-complete. Here we build an approximate set of predecessors
+    // in linear time and delegate the rest of work to the solver.
+    // This is done by asserting expressions like (rule_i => app_1 & ... app_n) and (head_1 & ... & head_m => lemma).
+    func_decl_multiset body_apps;
+    get_body_decls_set(m_rules, body_apps);
+    for (auto &entry : rels) {
+        pred_transformer *other = entry.m_value;
+        if (other->heads().size() == 1) {
+            // dvvrd: TODO: multiplex variables if there are several apps of same head
+            // XXX this is an entirely hacky way to obtain child reachability facts!
+            expr_ref_vector rfs = other->m_reach_solver->get_assertions();
+            for (expr *fml : rfs) {
+                std::cout << m_name << ": adding child reach. fact " << mk_pp(fml, m) << " from " << other->name() << "\n";
+                lemma fake_lemma(m, fml, infty_level());
+                add_lemma_from_child (*other, &fake_lemma, infty_level());
+            }
+        }
+        if (covers(body_apps, entry.m_key)) {
+            std::cout << m_name << " uses " << other->name() << "\n";
+            other->add_use(this);
+            if (this != other) {
+                for (lemma *l: other->m_frames.lemmas()) {
+                    std::cout << m_name << ": adding child lemma " << mk_pp(l->get_expr(), m) << " from " << other->name() << "\n";
+                    add_lemma_from_child(*other, l, next_level(l->level()));
+                }
+            }
+        }
+        if (this == other) {
+            continue;
+        }
+        func_decl_multiset other_body_apps;
+        get_body_decls_set(other->rules(), other_body_apps);
+        if (covers(other_body_apps, m_heads)) {
+            add_use(other);
+        }
+    }
 }
 
 void pred_transformer::init_rfs ()
@@ -2194,16 +2281,6 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
     return all;
 }
 
-void pred_transformer::frames::merge(const ptr_vector<frames> &fs)
-{
-//    std::cout << "\nMERGING FRAMES\n";
-//    for (frames *f : fs) {
-//        std::cout << f->m_pt.name()
-//                  << "; lemmas: " << f->m_lemmas.size()
-//                  << "; bg: " << f->m_bg_invs.size() << std::endl;
-//    }
-}
-
 void pred_transformer::frames::simplify_formulas ()
 {
     // number of subsumed lemmas
@@ -2559,6 +2636,7 @@ void context::init_rules(const datalog::rule_set& rules, decls2rel& rels)
     for (auto &entry : rels) {entry.m_value->init_rfs();}
 }
 
+
 pred_transformer &context::init_merged_pred_transformer(const func_decl_ptr_vector &preds)
 {
     pred_transformer *pt = alloc(pred_transformer, *this, get_manager(), preds);
@@ -2568,12 +2646,15 @@ pred_transformer &context::init_merged_pred_transformer(const func_decl_ptr_vect
         std::cout << h->get_name() << " ";
     }
     std::cout << ")\n";
-    // dvvrd: TODO: split preds by larger groups
     for (auto *pred : preds) {
         pts.push_back(&get_pred_transformer(pred));
     }
     m_pt_subsumptions.insert(*pt);
-//    pt->merge(pts);
+    pt->merge(pts);
+    pt_collection subsumed_pts = m_pt_subsumptions.smaller_elements(*pt);
+    pt->subsume_lemmas(subsumed_pts);
+    m_rels.insert(preds, pt);
+    pt->merge_child_lemmas(m_rels);
     return *pt;
 }
 

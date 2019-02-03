@@ -311,12 +311,13 @@ class pred_transformer {
             m_sorted = false;
             m_bg_invs.append(other.m_bg_invs);
         }
+        void inherit_bg_invs (frames &other) {
+            m_bg_invs.append(other.m_bg_invs);
+        }
 
         bool add_lemma (lemma *new_lemma);
         void propagate_to_infinity (unsigned level);
         bool propagate_to_next_level (unsigned level);
-
-        void merge(const ptr_vector<frames> &pts);
     };
 
     /**
@@ -488,7 +489,10 @@ public:
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
     void initialize(decls2rel const& pts);
-    void merge(ptr_vector<pred_transformer> const& pts);
+
+    void merge(const ptr_vector<pred_transformer> &pts);
+    void subsume_lemmas(const pt_collection &subsumed_pts);
+    void merge_child_lemmas(const decls2rel &rels);
 
     symbol const& name() const {return m_name;}
     func_decl_ptr_vector const& heads() const {return m_heads;}
