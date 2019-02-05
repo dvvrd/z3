@@ -35,7 +35,8 @@ private:
     public:
         func_decl_ref m_main;
         func_decl_ref_vector m_variants;
-        sym_mux_entry(ast_manager &m) : m_main(m), m_variants(m) {};
+        func_decl_ref m_associated;
+        sym_mux_entry(ast_manager &m) : m_main(m), m_variants(m), m_associated(m) {}
     };
 
     typedef obj_map<func_decl, sym_mux_entry*> decl2entry_map;
@@ -56,11 +57,13 @@ public:
     ast_manager & get_manager() const { return m; }
 
     void register_decl(func_decl *fdecl);
-    bool find_idx(func_decl * sym, unsigned & idx) const;
-    bool has_index(func_decl * sym, unsigned idx) const
-    {unsigned v; return find_idx(sym, v) && idx == v;}
+    bool find_idx(func_decl * sym, unsigned & idx, func_decl *&associated) const;
+    bool has_index(func_decl * sym, unsigned idx, func_decl *&associated) const
+    {unsigned v; return find_idx(sym, v, associated) && idx == v;}
 
     bool is_muxed(func_decl *fdecl) const {return m_muxes.contains(fdecl);}
+
+    void associate(func_decl *fdecl, func_decl *associated);
 
     /**
        \brief Return symbol created from prefix, or 0 if the prefix

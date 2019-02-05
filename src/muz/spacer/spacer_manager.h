@@ -104,6 +104,11 @@ public:
     func_decl * n2o(func_decl * p, unsigned o_idx) const
     {return m_mux.shift_decl(p, n_index(), o_index(o_idx));}
 
+    void associate(func_decl *p, func_decl *associated)
+    {m_mux.associate(p, associated);}
+    void subst_o(sym_mux::idx_subst &subst, func_decl *p, unsigned o_idx)
+    {subst.insert(p, o_index(o_idx));}
+
     void formula_o2n(expr * f, expr_ref & result, unsigned o_idx,
                      bool homogenous = true) const
     {m_mux.shift_expr(f, o_index(o_idx), n_index(), result, homogenous);}

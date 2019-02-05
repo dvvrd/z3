@@ -720,11 +720,142 @@ pred_transformer::pt_rule &pred_transformer::pt_rules::mk_rule(const pred_transf
     return *p;
 }
 
+const app_ref_vector &pred_transformer::pt_rules::mk_app_tags(ast_manager &m, pred_transformer::pt_rule &v)
+{
+    const datalog::rule &r = v.rule();
+    unsigned sz = r.get_uninterpreted_tail_size();
+    app_ref_vector app_tags(m);
+    app_tags.resize(sz);
+    for (unsigned i = 0; i < sz; ++i) {
+        func_decl *decl = r.get_tail(i)->get_decl();
+        std::string name = v.rule().get_decl()->get_name().str() + "__app_" + decl->get_name().str() + std::to_string(i);
+        app_tags.set(i, m.mk_const(symbol(name.c_str()), m.mk_bool_sort()));
+    }
+    v.set_app_tags(app_tags);
+    return v.app_tags();
+}
+
+
+void pred_transformer::occurrence_cache::init()
+{
+    for (auto &kv : m_rules) {
+        const datalog::rule &r = kv.get_value()->rule();
+        for (unsigned i = 0; i < r.get_uninterpreted_tail_size(); ++i) {
+            func_decl *f = r.get_tail(i)->get_decl();
+            insert_multiset(m_body_multiset, f);
+            occurrence occ { &r, i, kv.get_value()->app_tag(i) };
+            auto *e = m_occurrences.insert_if_not_there2(f, vector<occurrence>());
+            e->get_data().m_value.push_back(occ);
+        }
+    }
+}
+
+void pred_transformer::occurrence_cache::insert_multiset(func_decl_multiset &set, func_decl *f) {
+    auto *e = set.find_core(f);
+    if (e) {
+        ++e->get_data().m_value;
+    } else {
+        set.insert(f, 1);
+    }
+}
+
+bool pred_transformer::occurrence_cache::multiset_contains(const func_decl_multiset &body,
+                                                           func_decl *elem, unsigned count) const
+{
+    auto *e = body.find_core(elem);
+    return e ? e->get_data().m_value >= count : count == 0;
+}
+
+bool pred_transformer::occurrence_cache::covers(const func_decl_multiset &body,
+                                                const ptr_vector<func_decl> &sorted_decls) const
+{
+    if (sorted_decls.empty()) {
+        return true;
+    }
+    func_decl *prev = nullptr;
+    unsigned counter = 0;
+    for (func_decl *curr : sorted_decls) {
+        if (curr != prev && prev) {
+            if (!multiset_contains(body, prev, counter)) {
+                return false;
+            }
+            counter = 0;
+        }
+        ++counter;
+        prev = curr;
+    }
+    return multiset_contains(body, prev, counter);
+}
+
+pred_transformer::occurrence_cache::occurrence_cache(manager &pm, const pred_transformer::pt_rules &rules)
+    : pm(pm), m_rules(rules)
+{
+}
+
+bool pred_transformer::occurrence_cache::approximately_uses(const ptr_vector<func_decl> &head) const
+{
+    return covers(m_body_multiset, head);
+}
+
+void pred_transformer::occurrence_cache::mk_assumptions_rec(const func_decl_ptr_vector &heads, unsigned idx,
+                                                            obj_map<func_decl, const datalog::rule *> &used_rules,
+                                                            sym_mux::idx_subst &subst,
+                                                            app_ref_vector &app_tags,
+                                                            expr *fml,
+                                                            expr_ref_vector &result)
+{
+    if (idx >= heads.size()) {
+        ast_manager &m = pm.get_manager();
+        expr_ref tag(m), tmp(m);
+        tag = mk_and(app_tags);
+        pm.formula_n2o(fml, tmp, subst);
+        result.push_back(m.mk_implies(tag, tmp));
+        return;
+    }
+    func_decl *h = heads.get(idx);
+    auto *e = m_occurrences.find_core(h);
+    if (!e) {
+        return;
+    }
+
+    const vector<occurrence> &occs = e->get_data().m_value;
+    bool occurs = false;
+    for (const occurrence &occ : occs) {
+        func_decl *f = occ.rule->get_decl();
+        const datalog::rule *used_rule;
+        if (used_rules.find(f, used_rule)) {
+            if (used_rule != occ.rule) {
+                continue;
+            }
+        } else {
+            used_rules.insert(f, occ.rule);
+        }
+        occurs = true;
+        pm.subst_o(subst, h, occ.idx);
+        app_tags.set(idx, occ.app_tag);
+    }
+    if (occurs) {
+        mk_assumptions_rec(heads, idx + 1, used_rules, subst, app_tags, fml, result);
+    }
+}
+
+void pred_transformer::occurrence_cache::mk_assumptions(const func_decl_ptr_vector &heads,
+                                                        expr *fml, expr_ref_vector &result)
+{
+    obj_map<func_decl, const datalog::rule *> used_rules;
+    sym_mux::idx_subst subst;
+    app_ref_vector app_tags(pm.get_manager());
+    app_tags.resize(heads.size());
+    mk_assumptions_rec(heads, 0, used_rules, subst, app_tags, fml, result);
+}
+
+
 pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ptr_vector const& heads):
     pm(pm), m(pm.get_manager()),
     ctx(ctx), m_heads(heads),
     m_name(mk_name()),
     m_merged_head(m),
+    m_occurrences(pm, m_pt_rules),
     m_reach_solver (ctx.mk_solver2()),
     m_pobs(*this),
     m_frames(*this),
@@ -829,6 +960,7 @@ void pred_transformer::init_sig()
             func_decl_ref stm(m);
             stm = m.mk_func_decl(symbol(name_stm.str().c_str()), 0, (sort*const*)nullptr, arg_sort);
             m_sig.push_back(pm.get_o_pred(stm, 0));
+            pm.associate(stm, head);
         }
     }
     m_merged_head = m_heads.size() == 1 ? m_heads[0] : m.mk_func_decl(m_name, domain.size(), domain.c_ptr(), m.mk_bool_sort());
@@ -1109,7 +1241,9 @@ app_ref pred_transformer::mk_fresh_rf_tag (func_decl* head)
     name << head->get_name () << "#reach_tag_" << m_reach_facts.size ();
     decl = m.mk_func_decl (symbol (name.str ().c_str ()), 0,
                            (sort*const*)nullptr, m.mk_bool_sort ());
-    return app_ref(m.mk_const (pm.get_n_pred (decl)), m);
+    func_decl *n_decl = pm.get_n_pred (decl);
+    pm.associate(decl, head);
+    return app_ref(m.mk_const (n_decl), m);
 }
 
 void pred_transformer::add_rf (reach_fact *rf)
@@ -1711,29 +1845,10 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
     return res == l_false;
 }
 
-// dvvrd: puts into result implications of the form "<rule tag> => fml[a_i]", 
-// where a_i are args of apps of head in the body of rule for current predicate transformer
-// dvvrd: I KNOW WHAT TO DO! we should find out in which combinations of clauses "heads" are included (as body apps) and create assumptions of the form "<r_1 & .. & r_n> => fml[a_i]"
 void pred_transformer::mk_assumptions(func_decl_ptr_vector const& heads, expr* fml,
                                       expr_ref_vector& result)
 {
-    expr_ref tmp1(m), tmp2(m);
-    for (auto& kv : m_pt_rules) {
-        expr* tag = kv.m_value->tag();
-        datalog::rule const& r = kv.m_value->rule();
-        find_predecessors(r, m_predicates);
-        for (unsigned i = 0; i < m_predicates.size(); i++) {
-            func_decl* d = m_predicates[i];
-            // dvvrd: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // dvvrd: TODO: judging by check_inductive, we should be able to create "recursive" implications. Probably we should match the entire list of heads here
-            SASSERT(heads.size() == 1);
-            if (d == heads[0]) {
-                tmp1 = m.mk_implies(tag, fml);
-                pm.formula_n2o(tmp1, tmp2, i);
-                result.push_back(tmp2);
-            }
-        }
-    }
+    m_occurrences.mk_assumptions(heads, fml, result);
 }
 
 void pred_transformer::initialize(decls2rel const& pts)
@@ -1799,57 +1914,9 @@ void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
     m_solver->assert_expr (m_init, 0);
 }
 
-
-typedef obj_map<func_decl, unsigned> func_decl_multiset;
-
-void get_body_decls_set(const ptr_vector<datalog::rule> &rules, func_decl_multiset &result)
-{
-    for (datalog::rule *r : rules) {
-        for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i) {
-            func_decl *decl = r->get_tail(i)->get_decl();
-            auto *e = result.find_core(decl);
-            if (e) {
-                ++e->get_data().m_value;
-            } else {
-                result.insert(decl, 1);
-            }
-        }
-    }
-}
-
-bool multiset_contains(const func_decl_multiset &body, func_decl *elem, unsigned count)
-{
-    auto *e = body.find_core(elem);
-    return e ? e->get_data().m_value >= count : count == 0;
-}
-
-bool covers(const func_decl_multiset &body, const ptr_vector<func_decl> &sorted_decls)
-{
-    if (sorted_decls.empty()) {
-        return true;
-    }
-    func_decl *prev = nullptr;
-    unsigned counter = 0;
-    for (func_decl *curr : sorted_decls) {
-        if (curr != prev && prev) {
-            if (!multiset_contains(body, prev, counter)) {
-                return false;
-            }
-            counter = 0;
-        }
-        ++counter;
-        prev = curr;
-    }
-    return multiset_contains(body, prev, counter);
-}
-
 void pred_transformer::merge_child_lemmas(const decls2rel &rels)
 {
-    // Computing exact set of users can be shown to be NP-complete. Here we build an approximate set of predecessors
-    // in linear time and delegate the rest of work to the solver.
-    // This is done by asserting expressions like (rule_i => app_1 & ... app_n) and (head_1 & ... & head_m => lemma).
-    func_decl_multiset body_apps;
-    get_body_decls_set(m_rules, body_apps);
+    m_occurrences.init();
     for (auto &entry : rels) {
         pred_transformer *other = entry.m_value;
         if (other->heads().size() == 1) {
@@ -1862,7 +1929,7 @@ void pred_transformer::merge_child_lemmas(const decls2rel &rels)
                 add_lemma_from_child (*other, &fake_lemma, infty_level());
             }
         }
-        if (covers(body_apps, entry.m_key)) {
+        if (m_occurrences.approximately_uses(entry.m_key)) {
             std::cout << m_name << " uses " << other->name() << "\n";
             other->add_use(this);
             if (this != other) {
@@ -1875,9 +1942,7 @@ void pred_transformer::merge_child_lemmas(const decls2rel &rels)
         if (this == other) {
             continue;
         }
-        func_decl_multiset other_body_apps;
-        get_body_decls_set(other->rules(), other_body_apps);
-        if (covers(other_body_apps, m_heads)) {
+        if (other->m_occurrences.approximately_uses(m_heads)) {
             add_use(other);
         }
     }
@@ -1925,6 +1990,9 @@ void pred_transformer::init_rules(decls2rel const& pts) {
                 m_transition_clause.push_back(tag);
                 transitions.push_back(m.mk_implies(r.tag(), r.trans()));
                 if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
+                const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(m, r);
+                // dvvrd: TODO: really push into m_transition_clause?
+                transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
                 ++i;
             }
         }
@@ -1941,6 +2009,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
     m_init = mk_and(not_inits);
     // no rule has uninterpreted tail
     if (not_inits.empty ()) {m_all_init = true;}
+    m_occurrences.init();
 }
 
 #ifdef Z3DEBUG
@@ -2110,12 +2179,14 @@ app* pred_transformer::extend_initial (func_decl *head, expr *e)
 {
     SASSERT(m_extend_lits.contains(head));
     // create fresh extend literal
-    app_ref v(m);
     std::stringstream name;
     name << head->get_name() << "_ext";
-    v = m.mk_fresh_const (name.str ().c_str (),
+    app_ref o(m);
+    o = m.mk_fresh_const (name.str ().c_str (),
                           m.mk_bool_sort ());
-    v = m.mk_const (pm.get_n_pred (v->get_decl ()));
+    app_ref v(m);
+    v = m.mk_const (pm.get_n_pred (o->get_decl ()));
+    pm.associate(o->get_decl(), head);
 
     expr_ref ic(m);
 
@@ -2620,7 +2691,6 @@ void context::init_rules(const datalog::rule_set& rules, decls2rel& rels)
             func_decl_ptr_vector dep_key;
             dep_key.push_back(dep);
             rels.find(dep_key, pt_user);
-            std::cout << "=======================================\n" << pt->name() << " is using " << pt_user->name() << "=======================================\n";
             pt_user->add_use(pt);
         }
     }

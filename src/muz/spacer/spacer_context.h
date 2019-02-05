@@ -365,10 +365,11 @@ class pred_transformer {
         ptr_vector<app> m_auxs;  // auxiliary variables in m_trans
         app_ref_vector m_reps;   // map from fv in m_rule to ground constants
         app_ref m_tag;           // a unique tag for the rule
+        app_ref_vector m_app_tags; // tags for uninterpreted symbol applications in the body
 
     public:
         pt_rule(ast_manager &m, const datalog::rule &r) :
-            m_rule(r), m_trans(m), m_reps(m), m_tag(m) {}
+            m_rule(r), m_trans(m), m_reps(m), m_tag(m), m_app_tags(m) {}
 
         const datalog::rule &rule() const {return m_rule;}
 
@@ -378,6 +379,9 @@ class pred_transformer {
         ptr_vector<app> &auxs() {return m_auxs;}
         void set_auxs(ptr_vector<app> &v) {m_auxs.reset(); m_auxs.append(v);}
         void set_reps(app_ref_vector &v) {m_reps.reset(); m_reps.append(v);}
+        app *app_tag(unsigned idx) const {return m_app_tags.get(idx);}
+        const app_ref_vector &app_tags() const {return m_app_tags;}
+        void set_app_tags(const app_ref_vector &app_tags) {m_app_tags.reset(); m_app_tags.append(app_tags);}
 
         void set_trans(expr_ref &v) {m_trans=v;}
         expr* trans() const {return m_trans;}
@@ -410,11 +414,52 @@ class pred_transformer {
             p->set_tag(tag);
             m_tags.insert(tag, p);
         }
+        const app_ref_vector &mk_app_tags(ast_manager &m, pt_rule &v);
 
         bool empty() {return m_rules.empty();}
-        iterator begin() {return m_rules.begin();}
-        iterator end() {return m_rules.end();}
+        iterator begin() const {return m_rules.begin();}
+        iterator end() const {return m_rules.end();}
 
+    };
+
+    class occurrence_cache {
+        typedef obj_map<func_decl, unsigned> func_decl_multiset;
+        struct occurrence {
+            const datalog::rule *rule;
+            unsigned idx;
+            app *app_tag;
+        };
+        typedef obj_map<func_decl, vector<occurrence>> occurrence_map;
+
+        manager &pm;
+        const pt_rules &m_rules;
+        func_decl_multiset m_body_multiset;
+        occurrence_map m_occurrences;
+
+        void insert_multiset(func_decl_multiset &set, func_decl *f);
+        bool multiset_contains(const func_decl_multiset &body, func_decl *elem, unsigned count) const;
+        bool covers(const func_decl_multiset &body, const ptr_vector<func_decl> &sorted_decls) const;
+        void mk_assumptions_rec(const func_decl_ptr_vector &heads, unsigned idx,
+                                obj_map<func_decl, const datalog::rule *> &used_rules,
+                                sym_mux::idx_subst &subst,
+                                app_ref_vector &app_tags,
+                                expr *fml,
+                                expr_ref_vector& result);
+
+    public:
+        occurrence_cache(manager &pm, const pt_rules &rules);
+
+        void init();
+
+        /// Returns if merged cartesian product of rules may potentially contain the application of merged head.
+        /// If the result is false then the predicate transformer does not use the head for sure.
+        /// If the result is true, predicate transformer may (or may not) use the head.
+        /// Computing exact set of users can be shown to be NP-complete.
+        /// The final decision is taken by the solver; for that purpose the expressions of the form
+        /// (rule_i => app_1 & ... app_n) and (head_1 & ... & head_m => lemma) are asserted.
+        bool approximately_uses(const ptr_vector<func_decl> &head) const;
+
+        void mk_assumptions(const func_decl_ptr_vector &heads, expr* fml, expr_ref_vector& result);
     };
 
     manager&                     pm;                // spacer::manager
@@ -428,6 +473,7 @@ class pred_transformer {
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;           // pt rules used to derive transformer
     ptr_vector<datalog::rule>    m_rules;           // rules used to derive transformer
+    occurrence_cache             m_occurrences;     // cache for fast building the dependencies graph
     scoped_ptr<prop_solver>      m_solver;          // solver context
     ref<solver>                  m_reach_solver;       // context for reachability facts
     pob_manager                         m_pobs;            // proof obligations created so far

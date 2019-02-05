@@ -65,10 +65,16 @@ void sym_mux::ensure_capacity(sym_mux_entry &entry, unsigned sz) const {
     }
 }
 
-bool sym_mux::find_idx(func_decl * sym, unsigned & idx) const {
+bool sym_mux::find_idx(func_decl * sym, unsigned & idx, func_decl *&associated) const {
     std::pair<sym_mux_entry *, unsigned> entry;
-    if (m_muxes.find(sym, entry)) {idx = entry.second; return true;}
+    if (m_muxes.find(sym, entry)) {idx = entry.second; associated = entry.first->m_associated; return true;}
     return false;
+}
+
+void sym_mux::associate(func_decl *fdecl, func_decl *associated)
+{
+    sym_mux_entry *entry;
+    if (m_entries.find(fdecl, entry)) {entry->m_associated = associated;}
 }
 
 func_decl * sym_mux::find_by_decl(func_decl* fdecl, unsigned idx) const {
@@ -101,8 +107,9 @@ struct formula_checker {
         if (m_found || !is_app(e)) { return; }
 
         func_decl * sym = to_app(e)->get_decl();
+        func_decl * tmp = nullptr;
         unsigned sym_idx;
-        if (!m_parent.find_idx(sym, sym_idx)) { return; }
+        if (!m_parent.find_idx(sym, sym_idx, tmp)) { return; }
 
         bool have_idx = sym_idx == m_idx;
         m_found = !have_idx;
@@ -158,11 +165,13 @@ public:
         if (!is_app(s)) { return false; }
         app * a = to_app(s);
         func_decl * sym = a->get_decl();
-        if (!m_parent.has_index(sym, m_from_idx)) {
+        func_decl * associated = nullptr;
+        if (!m_parent.has_index(sym, m_from_idx, associated)) {
             SASSERT(!m_homogenous || !m_parent.is_muxed(sym));
             return false;
         }
-        unsigned tgt_idx = m_subst ? m_subst->find(sym) : m_to_idx;
+        SASSERT(!m_subst || associated);
+        unsigned tgt_idx = m_subst ? m_subst->find(associated) : m_to_idx;
         func_decl * tgt = m_parent.shift_decl(sym, m_from_idx, tgt_idx);
         t = m.mk_app(tgt, a->get_args());
         m_pinned.push_back(t);
