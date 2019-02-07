@@ -838,8 +838,8 @@ class derivation {
     /// a single premise of a derivation
     class premise {
         pred_transformer &m_pt;
-        /// origin order in the rule
-        unsigned m_oidx;
+        /// origin orders in the rule
+        svector<unsigned> m_oidcs;
         /// summary fact corresponding to the premise
         expr_ref m_summary;
         ///  whether this is a must or may premise
@@ -847,14 +847,15 @@ class derivation {
         app_ref_vector m_ovars;
 
     public:
-        premise (pred_transformer &pt, unsigned oidx, expr *summary, bool must,
+        premise (pred_transformer &pt, unsigned oidx, expr *summary,
                  const ptr_vector<app> *aux_vars = nullptr);
+        premise (pred_transformer &pt, const svector<unsigned> &oidcs);
         premise (const premise &p);
 
         bool is_must() {return m_must;}
         expr * get_summary() {return m_summary.get ();}
         app_ref_vector &get_ovars() {return m_ovars;}
-        unsigned get_oidx() {return m_oidx;}
+        const svector<unsigned> &get_oidcs() {return m_oidcs;}
         pred_transformer &pt() {return m_pt;}
 
         /// \brief Updated the summary.
@@ -882,8 +883,9 @@ class derivation {
     void exist_skolemize(expr *fml, app_ref_vector &vars, expr_ref &res);
 public:
     derivation (pob& parent, expr *trans, app_ref_vector const &evars);
-    void add_premise (pred_transformer &pt, unsigned oidx,
-                      expr * summary, bool must, const ptr_vector<app> *aux_vars = nullptr);
+    void add_reachability_premise (pred_transformer &pt, unsigned oidx, expr * summary,
+                                   const ptr_vector<app> *aux_vars = nullptr);
+    void add_summary_premise (pred_transformer &pt, const svector<unsigned> &subst);
 
     /// creates the first child. Must be called after all the premises
     /// are added. The model must be valid for the premises

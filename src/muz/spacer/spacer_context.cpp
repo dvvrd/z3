@@ -205,13 +205,15 @@ derivation::derivation (pob& parent, expr *trans,
 
 
 
-void derivation::add_premise (pred_transformer &pt,
+void derivation::add_reachability_premise (pred_transformer &pt,
                               unsigned oidx,
                               expr* summary,
-                              bool must,
                               const ptr_vector<app> *aux_vars)
-{m_premises.push_back (premise (pt, oidx, summary, must, aux_vars));}
+{m_premises.push_back (premise (pt, oidx, summary, aux_vars));}
 
+void derivation::add_summary_premise (pred_transformer &pt,
+                                      const svector<unsigned> &subst)
+{m_premises.push_back (premise (pt, subst));}
 
 
 pob *derivation::create_first_child (model &mdl) {
@@ -255,7 +257,6 @@ void derivation::exist_skolemize(expr* fml, app_ref_vector &vars, expr_ref &res)
     sub(fml, res);
 }
 
-// dvvrd: m_active points to app! we should point to set of apps!
 pob *derivation::create_next_child(model &mdl)
 {
     timeit _timer (is_trace_enabled("spacer_timeit"),
@@ -299,10 +300,10 @@ pob *derivation::create_next_child(model &mdl)
     STRACE("spacer",
            tout << "[dvvrd] m_trans after MBP: " << mk_pp(m_trans, m) << "\n";);
 
-    if (!mdl.is_true(m_premises[m_active].get_summary())) {
-        IF_VERBOSE(1, verbose_stream() << "Summary unexpectendly not true\n";);
-        return nullptr;
-    }
+//    if (!mdl.is_true(m_premises[m_active].get_summary())) {
+//        IF_VERBOSE(1, verbose_stream() << "Summary unexpectendly not true\n";);
+//        return nullptr;
+//    }
 
 
     // create the post-condition by computing a post-image over summaries
@@ -347,9 +348,12 @@ pob *derivation::create_next_child(model &mdl)
     STRACE("spacer",
            tout << "[dvvrd] POST after skolemization: " << mk_pp(post, m) << "\n";);
 
-    get_manager ().formula_o2n (post.get (), post,
-                                m_premises [m_active].get_oidx (),
-                                vars.empty());
+    // dvvrd: TODO: implement more effectively (one-traversal) shifting
+    const svector<unsigned> &oidcs = m_premises [m_active].get_oidcs();
+    for (unsigned oidx : oidcs) {
+        get_manager ().formula_o2n (post.get (), post, oidx,
+                                    vars.empty() && oidcs.size() == 1);
+    }
 
 
     /* The level and depth are taken from the parent, not the sibling.
@@ -385,9 +389,11 @@ pob *derivation::create_next_child ()
     { summaries.push_back(m_premises [i].get_summary()); }
 
     // -- orient transition relation towards m_active premise
-    expr_ref active_trans (m);
-    pm.formula_o2n (m_trans, active_trans,
-                    m_premises[m_active].get_oidx (), false);
+    expr_ref active_trans (m_trans, m);
+    // dvvrd: TODO: implement more effectively (one-traversal) shifting
+    for (unsigned oidx : m_premises[m_active].get_oidcs ()) {
+        pm.formula_o2n (active_trans.get(), active_trans, oidx, false);
+    }
     summaries.push_back (active_trans);
 
     // if not true, bail out, the must summary of m_active is not strong enough
@@ -451,27 +457,39 @@ pob *derivation::create_next_child ()
 
 /// derivation::premise
 
-derivation::premise::premise (pred_transformer &pt, unsigned oidx,
-                              expr *summary, bool must,
+derivation::premise::premise (pred_transformer &pt, unsigned o_idx,
+                              expr *summary,
                               const ptr_vector<app> *aux_vars) :
-    m_pt (pt), m_oidx (oidx),
-    m_summary (summary, pt.get_ast_manager ()), m_must (must),
+    m_pt (pt),
+    m_summary (summary, pt.get_ast_manager ()), m_must (true),
     m_ovars (pt.get_ast_manager ())
 {
 
     ast_manager &m = m_pt.get_ast_manager ();
     manager &sm = m_pt.get_manager ();
 
+    m_oidcs.push_back(o_idx);
+
     for (unsigned i = 0; i < m_pt.sig_size(); ++i)
-    { m_ovars.push_back(m.mk_const(sm.o2o(pt.sig(i), 0, m_oidx))); }
+    { m_ovars.push_back(m.mk_const(sm.o2o(pt.sig(i), 0, o_idx))); }
 
     if (aux_vars)
         for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i)
-        { m_ovars.push_back(m.mk_const(sm.n2o(aux_vars->get(i)->get_decl(), m_oidx))); }
+        { m_ovars.push_back(m.mk_const(sm.n2o(aux_vars->get(i)->get_decl(), o_idx))); }
+}
+
+derivation::premise::premise (pred_transformer &pt, const svector<unsigned> &oidcs) :
+    m_pt (pt), m_oidcs (oidcs),
+    m_summary (pt.get_ast_manager ()), m_must (false),
+    m_ovars (pt.get_ast_manager ())
+{
+
+    ast_manager &m = m_pt.get_ast_manager ();
+    manager &sm = m_pt.get_manager ();
 }
 
 derivation::premise::premise (const derivation::premise &p) :
-    m_pt (p.m_pt), m_oidx (p.m_oidx), m_summary (p.m_summary), m_must (p.m_must),
+    m_pt (p.m_pt), m_oidcs (p.m_oidcs), m_summary (p.m_summary), m_must (p.m_must),
     m_ovars (p.m_ovars) {}
 
 /// \brief Updated the summary.
@@ -483,16 +501,18 @@ void derivation::premise::set_summary (expr * summary, bool must,
     manager &sm = m_pt.get_manager ();
 
     m_must = must;
-    sm.formula_n2o (summary, m_summary, m_oidx);
+    SASSERT(m_oidcs.size() == 1);
+    unsigned oidx = m_oidcs[0];
+    sm.formula_n2o (summary, m_summary, oidx);
 
     m_ovars.reset ();
     for (unsigned i = 0; i < m_pt.sig_size(); ++i)
-    { m_ovars.push_back(m.mk_const(sm.o2o(m_pt.sig(i), 0, m_oidx))); }
+    { m_ovars.push_back(m.mk_const(sm.o2o(m_pt.sig(i), 0, oidx))); }
 
     if (aux_vars)
         for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i)
             m_ovars.push_back (m.mk_const (sm.n2o (aux_vars->get (i)->get_decl (),
-                                                   m_oidx)));
+                                                   oidx)));
 }
 
 
@@ -1060,7 +1080,8 @@ void pred_transformer::find_rules(model &model,
     for (auto &kv : m_pt_rules) {
         app* tag = kv.m_value->tag();
         // dvvrd: TODO: something should be done to repeating heads!
-        if (!concrete_heads.contains(kv.m_value->rule().get_decl()) && model.eval(tag->get_decl(), vl) && m.is_true(vl)) {
+        if (!concrete_heads.contains(kv.m_value->rule().get_decl()) &&
+                model.eval(tag->get_decl(), vl) && m.is_true(vl)) {
             const datalog::rule *r = &kv.m_value->rule();
             best_rules.insert(r->get_decl(), r);
             bool intersects_with_all_rfs = true;
@@ -1095,7 +1116,8 @@ void pred_transformer::find_rules(model &model,
     }
 }
 
-void pred_transformer::find_predecessors(datalog::rule const& r, func_decl_ptr_vector& preds) const
+void pred_transformer::find_predecessors(datalog::rule const& r,
+                                         func_decl_ptr_vector& preds) const
 {
     preds.reset();
     unsigned tail_sz = r.get_uninterpreted_tail_size();
@@ -1104,7 +1126,8 @@ void pred_transformer::find_predecessors(datalog::rule const& r, func_decl_ptr_v
     }
 }
 
-void pred_transformer::find_predecessors(ptr_vector<const datalog::rule> const& rules, func_decl_ptr_vector& preds) const
+void pred_transformer::find_predecessors(ptr_vector<const datalog::rule> const& rules,
+                                         func_decl_ptr_vector& preds) const
 {
     preds.reset();
     for (auto *r : rules) {
@@ -1608,7 +1631,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
             find_predecessors(*r, m_predicates);
             if (m_predicates.empty()) {continue;}
             for (unsigned i = 0; i < m_predicates.size(); i++) {
-                const pred_transformer &pt = ctx.get_pred_transformer(m_predicates.get(i));
+                const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
                 if (pt.has_rfs()) {
                     expr_ref a(m);
                     pm.formula_n2o(pt.get_last_rf_tag(), a, i);
@@ -1646,8 +1669,9 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
 //        STRACE("spacer", tout << mk_pp(p, m) << "\n";);
 //    }
     STRACE("spacer", tout << "\n";);
-    lbool is_sat = m_solver->check_assumptions (post, reach_assumps,
-                                               m_transition_clause, bg.size(), bg.c_ptr(), 0);
+    lbool is_sat = m_solver->check_assumptions(post, reach_assumps,
+                                               m_transition_clause,
+                                               bg.size(), bg.c_ptr(), 0);
 
     TRACE ("spacer",
            if (!reach_assumps.empty ()) {
@@ -4172,54 +4196,63 @@ bool context::create_children(pob& n,
 
     derivation *deriv = alloc(derivation, n, phi, vars);
 
-    get_pred_transformer(preds);
-///// ----- begin of old code -------
-    // pick an order to process children
-    unsigned_vector kid_order;
-    kid_order.resize(preds.size(), 0);
-    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) kid_order[i] = i;
-    if (m_children_order == CO_REV_RULE) {
-        kid_order.reverse();
-    }
-    else if (m_children_order == CO_RANDOM) {
-        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
-    }
-
-    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
-        unsigned j = kid_order[i];
-
-        // dvvrd: TODO: THIS IS THE MOMENT TO PUSH COMBINED SUMMARIES!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! REWRITE ALL THE SHIT!
-        pred_transformer &pt = get_pred_transformer(preds.get(j));
-
-        const ptr_vector<app> *aux = nullptr;
-        expr_ref sum(m);
-        sum = pt.get_origin_summary (mdl, prev_level(n.level()),
-                                     j, reach_pred_used[j], &aux);
-        if (!sum) {
-            dealloc(deriv);
-            return false;
-        }
-        // dvvrd: to avoid projecting vars of other apps just do not add it into premise (see create_next_child)?
-        STRACE("spacer",
-               tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
-        deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
-    }
-///// ----- end of old code -------
-
-//    pred_transformer &pt = get_pred_transformer(preds);
-
-//    const ptr_vector<app> *aux = nullptr;
-//    expr_ref sum(m);
-//    sum = pt.get_origin_summary (mdl, prev_level(n.level()),
-//                                 j, reach_pred_used[j], &aux);
-//    if (!sum) {
-//        dealloc(deriv);
-//        return false;
+//    get_pred_transformer(preds);
+/////// ----- begin of old code -------
+//    // pick an order to process children
+//    unsigned_vector kid_order;
+//    kid_order.resize(preds.size(), 0);
+//    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) kid_order[i] = i;
+//    if (m_children_order == CO_REV_RULE) {
+//        kid_order.reverse();
 //    }
-//    // dvvrd: to avod projecting vars of other apps just do not add it into premise (see create_next_child)?
-//    STRACE("spacer",
-//           tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
-//    deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
+//    else if (m_children_order == CO_RANDOM) {
+//        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
+//    }
+
+//    std::cout << "------------------------------\n";
+//    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
+//        unsigned j = kid_order[i];
+
+//        pred_transformer &pt = get_pred_transformer(preds.get(j));
+//        std::cout << "CREATE_CHILDREN (LEVEL" << n.level() << "): " << pt.name() << " is " << (reach_pred_used[j] ? "rf" : "sum") << "\n";
+
+//        const ptr_vector<app> *aux = nullptr;
+//        expr_ref sum(m);
+//        sum = pt.get_origin_summary (mdl, prev_level(n.level()),
+//                                     j, reach_pred_used[j], &aux);
+//        if (!sum) {
+//            dealloc(deriv);
+//            return false;
+//        }
+//        STRACE("spacer",
+//               tout << "[dvvrd] Adding premise[" << j << "]: " << reach_pred_used[j] << ";;; " << mk_pp(sum, m) << "\n";);
+//        deriv->add_premise (pt, j, sum, reach_pred_used[j], aux);
+//    }
+/////// ----- end of old code -------
+
+    func_decl_ptr_vector heads;
+    svector<unsigned> subst;
+    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
+        if (reach_pred_used[i]) {
+            pred_transformer &pt = get_pred_transformer(preds.get(i));
+            const ptr_vector<app> *aux = nullptr;
+            expr_ref sum(m);
+            sum = pt.get_origin_summary (mdl, prev_level(n.level()), i, true, &aux);
+            if (!sum) {
+                dealloc(deriv);
+                return false;
+            }
+            deriv->add_reachability_premise(pt, i, sum, aux);
+        } else {
+            heads.push_back(preds[i]);
+            subst.push_back(i);
+        }
+    }
+
+    pred_transformer &premise_pt = get_pred_transformer(preds);
+    deriv->add_summary_premise(premise_pt, subst);
+
+    SASSERT(!heads.empty());
 
     // create post for the first child and add to queue
     pob* kid = deriv->create_first_child (mdl);
