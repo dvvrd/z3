@@ -107,7 +107,7 @@ public:
      */
     lbool check_assumptions(const expr_ref_vector & hard,
                             expr_ref_vector & soft,
-                            const expr_ref_vector &clause,
+                            const vector<expr_ref_vector> &clauses,
                             unsigned num_bg = 0,
                             expr * const *bg = nullptr,
                             unsigned solver_id = 0);

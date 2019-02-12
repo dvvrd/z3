@@ -415,11 +415,11 @@ class pred_transformer {
             m_tags.insert(tag, p);
         }
         const app_ref_vector &mk_app_tags(ast_manager &m, pt_rule &v);
+        void merge(const ptr_vector<pred_transformer> &pts);
 
         bool empty() {return m_rules.empty();}
         iterator begin() const {return m_rules.begin();}
         iterator end() const {return m_rules.end();}
-
     };
 
     class occurrence_cache {
@@ -479,7 +479,8 @@ class pred_transformer {
     pob_manager                         m_pobs;            // proof obligations created so far
     frames                       m_frames;          // frames with lemmas
     reach_fact_ref_vector        m_reach_facts;     // reach facts
-    expr_ref_vector              m_transition_clause; // extra clause for trans
+    expr_ref_vector              m_reach_fmls;      // ultimate reachability formulas
+    vector<expr_ref_vector>      m_transition_clauses; // extra clause for trans
     expr_ref                     m_transition;      // transition relation
     expr_ref                     m_init;            // initial condition
     decl2app                     m_extend_lits;     // current literal to extend initial state

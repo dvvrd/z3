@@ -391,6 +391,7 @@ pob *derivation::create_next_child ()
     // -- orient transition relation towards m_active premise
     expr_ref active_trans (m_trans, m);
     // dvvrd: TODO: implement more effectively (one-traversal) shifting
+    // dvvrd: TODO: POTENTIALLY BUGGY CODE! if vars are non-empty, they would be renamed as well
     for (unsigned oidx : m_premises[m_active].get_oidcs ()) {
         pm.formula_o2n (active_trans.get(), active_trans, oidx, false);
     }
@@ -483,9 +484,6 @@ derivation::premise::premise (pred_transformer &pt, const svector<unsigned> &oid
     m_summary (pt.get_ast_manager ()), m_must (false),
     m_ovars (pt.get_ast_manager ())
 {
-
-    ast_manager &m = m_pt.get_ast_manager ();
-    manager &sm = m_pt.get_manager ();
 }
 
 derivation::premise::premise (const derivation::premise &p) :
@@ -755,6 +753,18 @@ const app_ref_vector &pred_transformer::pt_rules::mk_app_tags(ast_manager &m, pr
     return v.app_tags();
 }
 
+void pred_transformer::pt_rules::merge(const ptr_vector<pred_transformer> &pts)
+{
+    for (pred_transformer *pt : pts) {
+        for (auto &e : pt->m_pt_rules.m_rules) {
+            m_rules.insert(&e.get_key(), e.get_value());
+        }
+        for (auto &e : pt->m_pt_rules.m_tags) {
+            m_tags.insert(&e.get_key(), e.get_value());
+        }
+    }
+}
+
 
 void pred_transformer::occurrence_cache::init()
 {
@@ -880,7 +890,8 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ptr_vect
     m_pobs(*this),
     m_frames(*this),
     m_reach_facts(),
-    m_transition_clause(m), m_transition(m), m_init(m),
+    m_reach_fmls(m),
+    m_transition(m), m_init(m),
     m_all_init(false)
 {
     m_solver = alloc(prop_solver, m, ctx.mk_solver0(), ctx.mk_solver1(),
@@ -1001,6 +1012,7 @@ void pred_transformer::ensure_level(unsigned level)
 // MAKES QUERY
 bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
 {
+    SASSERT(heads().size() == 1);
     scoped_watch _t_(m_must_reachable_watch);
     SASSERT (state);
     // XXX This seems to mis-handle the case when state is
@@ -1024,6 +1036,7 @@ pt_collection pred_transformer::subsumers()
 
 
 reach_fact* pred_transformer::get_used_rf (model& mdl, bool all) {
+    SASSERT(heads().size() == 1);
     expr_ref v (m);
     model::scoped_model_completion _sc_(mdl, false);
 
@@ -1036,6 +1049,7 @@ reach_fact* pred_transformer::get_used_rf (model& mdl, bool all) {
 }
 
 reach_fact *pred_transformer::get_used_origin_rf(model& mdl, unsigned oidx) {
+    SASSERT(heads().size() == 1);
     expr_ref b(m), v(m);
     model::scoped_model_completion _sc_(mdl, false);
     for (auto *rf : m_reach_facts) {
@@ -1071,6 +1085,7 @@ void pred_transformer::find_rules(model &model,
     SASSERT(rules.empty());
     SASSERT(is_concrete.empty());
     obj_map<func_decl, const datalog::rule*> best_rules;
+    obj_map<func_decl, vector<bool>> reach_pred_used_map;
     func_decl_set concrete_heads;
 
     // find a rule whose tag is true in the model;
@@ -1086,8 +1101,8 @@ void pred_transformer::find_rules(model &model,
             best_rules.insert(r->get_decl(), r);
             bool intersects_with_all_rfs = true;
             num_reuse_reach = 0;
-            reach_pred_used.reset();
             unsigned tail_sz = r->get_uninterpreted_tail_size();
+            vector<bool> rpu;
             for (unsigned i = 0; i < tail_sz; i++) {
                 bool used = false;
                 func_decl* d = r->get_tail(i)->get_decl();
@@ -1101,9 +1116,10 @@ void pred_transformer::find_rules(model &model,
                     intersects_with_all_rfs &= used;
                 }
 
-                reach_pred_used.push_back (used);
+                rpu.insert(used);
                 if (used) {num_reuse_reach++;}
             }
+            reach_pred_used_map.insert(r->get_decl(), rpu);
             if (intersects_with_all_rfs) {
                 concrete_heads.insert(r->get_decl());
             }
@@ -1113,6 +1129,7 @@ void pred_transformer::find_rules(model &model,
     for (auto &kv : best_rules) {
         is_concrete.push_back(concrete_heads.contains(kv.m_key));
         rules.push_back(kv.m_value);
+        reach_pred_used.append(reach_pred_used_map.find(kv.m_key));
     }
 }
 
@@ -1189,6 +1206,7 @@ void pred_transformer::add_lemma_core(lemma* lemma, bool ground_only)
         if (is_infty_level(lvl)) {
             m_solver->assert_expr(l);
             for (pred_transformer *pt : subsumers()) {
+                std::cout << "propagating inifinite-level lemma to " << pt->name() << "\n";
                 pt->m_solver->assert_expr(l);
             }
         } else {
@@ -1257,6 +1275,7 @@ void pred_transformer::add_lemma_from_child (pred_transformer& child,
 
 app_ref pred_transformer::mk_fresh_rf_tag (func_decl* head)
 {
+    SASSERT(heads().size() == 1);
     SASSERT(head);
     std::stringstream name;
     func_decl_ref decl(m);
@@ -1271,13 +1290,17 @@ app_ref pred_transformer::mk_fresh_rf_tag (func_decl* head)
 
 void pred_transformer::add_rf (reach_fact *rf)
 {
+    SASSERT(heads().size() == 1);
     timeit _timer (is_trace_enabled("spacer_timeit"),
                    "spacer::pred_transformer::add_rf",
                    verbose_stream ());
 
+    std::cout << "[" << m_name << "] add_rf: " << rf->get_rule().get_head()->get_name() << " "
+           << (rf->is_init () ? "INIT " : "")
+           << mk_pp(rf->get (), m) << "\n";
+
     TRACE ("spacer",
            tout << "[" << m_name << "] add_rf: " << rf->get_rule().get_head()->get_name() << " "
-           // tout << "add_rf: " << head()->get_name() << " "
            << (rf->is_init () ? "INIT " : "")
            << mk_pp(rf->get (), m) << "\n";);
 
@@ -1308,6 +1331,7 @@ void pred_transformer::add_rf (reach_fact *rf)
     if (last_tag) {fml = m.mk_or(m.mk_not(last_tag), rf->get(), rf->tag());}
     else {fml = m.mk_or(rf->get(), rf->tag());}
     m_reach_solver->assert_expr (fml);
+    m_reach_fmls.push_back(fml);
     TRACE ("spacer", tout << "updating reach ctx: " << fml << "\n";);
 
     // update solvers of other pred_transformers
@@ -1320,6 +1344,7 @@ void pred_transformer::add_rf (reach_fact *rf)
 
 expr_ref pred_transformer::get_reachable()
 {
+    SASSERT(heads().size() == 1);
     expr_ref res(m);
     res = m.mk_false();
 
@@ -1358,7 +1383,10 @@ expr_ref pred_transformer::get_reachable()
 }
 
 expr* pred_transformer::get_last_rf_tag () const
-{return m_reach_facts.empty() ? nullptr : m_reach_facts.back()->tag();}
+{
+    SASSERT(heads().size() == 1);
+    return m_reach_facts.empty() ? nullptr : m_reach_facts.back()->tag();
+}
 
 expr_ref pred_transformer::get_cover_delta(func_decl* p_orig, int level)
 {
@@ -1514,6 +1542,7 @@ void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
 // MAKES QUERY
 bool pred_transformer::is_blocked (pob &n, unsigned &uses_level)
 {
+    std::cout << "pred_transformer::is_blocked\n";
     ensure_level (n.level ());
     prop_solver::scoped_level _sl (*m_solver, n.level ());
     m_solver->set_core (nullptr);
@@ -1525,7 +1554,7 @@ bool pred_transformer::is_blocked (pob &n, unsigned &uses_level)
     // transition relation is irrelevant
     // XXX quic3: not all lemmas are asserted at the post-condition
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [is_blocked]: checking " << post.size() << " assumptions for " << mk_pp(n.post(), m) << "\n";);
-    lbool res = m_solver->check_assumptions (post, _aux, _aux,
+    lbool res = m_solver->check_assumptions (post, _aux, vector<expr_ref_vector>(),
                                             0, nullptr, 0);
     if (res == l_false) { uses_level = m_solver->uses_level(); }
     return res == l_false;
@@ -1595,6 +1624,10 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                                      vector<bool>& reach_pred_used,
                                      unsigned& num_reuse_reach)
 {
+    std::cout << "==================================================\n";
+    std::cout << "is-reachable: " << m_name << " level: "
+          << n.level() << " depth: " << n.depth () << "\n";
+          std::cout << mk_pp(n.post(), m) << "\n";
     TRACE("spacer",
           tout << "is-reachable: " << m_name << " level: "
           << n.level() << " depth: " << n.depth () << "\n";
@@ -1627,8 +1660,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     // populate reach_assumps
     if (n.level () > 0 && !m_all_init) {
         for (auto &kv : m_pt_rules) {
-            datalog::rule const* r = &kv.m_value->rule();
-            find_predecessors(*r, m_predicates);
+            find_predecessors(kv.m_value->rule(), m_predicates);
             if (m_predicates.empty()) {continue;}
             for (unsigned i = 0; i < m_predicates.size(); i++) {
                 const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
@@ -1660,18 +1692,10 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     for (auto &entry : m_extend_lits) {
         bg.push_back(entry.m_value);
     }
-    STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [is_reachable]: checking " << post.size() << " assumptions for ";);
-    for (auto &p : post) {
-        STRACE("spacer", tout << mk_pp(p, m) << "\n";);
-    }
-//    STRACE("spacer", tout << "----- bg (" << bg.size() << ") ----- \n";);
-//    for (auto p : bg) {
-//        STRACE("spacer", tout << mk_pp(p, m) << "\n";);
-//    }
-    STRACE("spacer", tout << "\n";);
     lbool is_sat = m_solver->check_assumptions(post, reach_assumps,
-                                               m_transition_clause,
+                                               m_transition_clauses,
                                                bg.size(), bg.c_ptr(), 0);
+    std::cout << is_sat << "\n";
 
     TRACE ("spacer",
            if (!reach_assumps.empty ()) {
@@ -1686,6 +1710,19 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
         if (core) { core->reset(); }
         if (model && model->get()) {
             find_rules(**model, is_concrete, reach_pred_used, num_reuse_reach, rules);
+            std::cout << "------------------------------------------\n";
+            std::cout << "reachable "
+                   << "rules cout: " << rules.size() << "; "
+                   << "is_concrete [ ";
+                   for (bool concr : is_concrete)
+                       std::cout << concr << " ";
+                   std::cout << "] rused: ";
+                   for (unsigned i = 0, sz = reach_pred_used.size (); i < sz; ++i)
+                       std::cout << reach_pred_used [i];
+                   std::cout << "\n";
+//            std::cout << "model: ";
+//            model_smt2_pp(std::cout, m, **model, 0);
+
             TRACE ("spacer", tout << "reachable "
                    << "is_concrete [ ";
                    for (bool concr : is_concrete)
@@ -1756,6 +1793,7 @@ bool pred_transformer::is_ctp_blocked(lemma *lem) {
 //    pm.formula_n2o(lemmas.get(), lemmas, 0);
 //    if (ctp->is_false(lemmas)) return false;
 
+    std::cout << "BLOCKED!\n";
     // lem is blocked by ctp since none of the lemmas at the previous
     // level block ctp
     return true;
@@ -1766,11 +1804,13 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
                                     unsigned& solver_level,
                                     expr_ref_vector* core)
 {
+    std::cout << m_name << ": is_invariant " << level << " " << mk_pp(lem->get_expr(), m) << (lem->is_blocked() ? " [blocked]" : "") << "\n";
     if (lem->is_blocked()) return false;
 
     m_stats.m_num_is_invariant++;
     if (is_ctp_blocked(lem)) {
         m_stats.m_num_ctp_blocked++;
+        std::cout << "ctp blocked! not invariant\n";
         return false;
     }
 
@@ -1810,7 +1850,7 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
         STRACE("spacer", tout << mk_pp(p, m) << "\n";);
     }
     STRACE("spacer", tout << "\n";);
-    lbool r = m_solver->check_assumptions (cand, aux, m_transition_clause,
+    lbool r = m_solver->check_assumptions (cand, aux, m_transition_clauses,
                                            conj.size(), conj.c_ptr(), 1);
     if (r == l_false) {
         solver_level = m_solver->uses_level ();
@@ -1819,11 +1859,16 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
         SASSERT (level <= solver_level);
     }
     else if (r == l_true) {
+//        std::cout << "CTI: ";
+//        model_smt2_pp(std::cout, m, **mdl_ref_ptr, 0);
+//        std::cout << "\n";
+//        std::cout.flush();
         // TBD: optionally remove unused symbols from the model
         if (mdl_ref_ptr) {lem->set_ctp(*mdl_ref_ptr);}
     }
     else {lem->reset_ctp();}
 
+    std::cout << "returning " << (r == l_false) << "\n";
     return r == l_false;
 }
 
@@ -1854,7 +1899,7 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
     }
     STRACE("spacer", tout << "\n";);
     lbool res = m_solver->check_assumptions (state, aux,
-                                            m_transition_clause,
+                                            m_transition_clauses,
                                             conj.size (), conj.c_ptr (), 1);
     if (res == l_false) {
         state.reset();
@@ -1916,16 +1961,16 @@ void pred_transformer::subsume_lemmas(const pt_collection &subsumed_pts)
 
 void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
 {
+    std::cout << "MERGING!\n";
     // dvvrd: TODO: trace it baby
     expr_ref_vector transition(m);
     expr_ref_vector init(m);
     m_all_init = true;
     for (pred_transformer *pt : pts) {
         m_rules.append(pt->m_rules);
-        m_reach_facts.append(pt->m_reach_facts);
         transition.push_back(pt->m_transition);
         init.push_back(pt->m_init);
-        m_transition_clause.append(pt->m_transition_clause);
+        m_transition_clauses.append(pt->m_transition_clauses);
         m_all_init &= pt->m_all_init;
         m_frames.inherit_bg_invs(pt->m_frames);
     }
@@ -1933,32 +1978,45 @@ void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
     flatten_and(init);
     m_transition = mk_and(transition);
     m_init = mk_and(init);
+    m_pt_rules.merge(pts);
+
+    m_extend_lits.reset();
+    for (pred_transformer *pt : pts) {
+        for (auto &e : pt->m_extend_lits) {
+            m_extend_lits.insert(&e.get_key(), e.get_value());
+        }
+    }
 
     m_solver->assert_expr (m_transition);
     m_solver->assert_expr (m_init, 0);
+//    init_rfs();
 }
 
 void pred_transformer::merge_child_lemmas(const decls2rel &rels)
 {
     m_occurrences.init();
-    for (auto &entry : rels) {
-        pred_transformer *other = entry.m_value;
-        if (other->heads().size() == 1) {
-            // dvvrd: TODO: multiplex variables if there are several apps of same head
-            // XXX this is an entirely hacky way to obtain child reachability facts!
-            expr_ref_vector rfs = other->m_reach_solver->get_assertions();
-            for (expr *fml : rfs) {
-                std::cout << m_name << ": adding child reach. fact " << mk_pp(fml, m) << " from " << other->name() << "\n";
-                lemma fake_lemma(m, fml, infty_level());
-                add_lemma_from_child (*other, &fake_lemma, infty_level());
+    func_decl_set processed_predecessors;
+    for (const datalog::rule *rule : m_rules) {
+        for (unsigned i = 0; i < rule->get_uninterpreted_tail_size(); ++i) {
+            func_decl *decl = rule->get_tail(i)->get_decl();
+            if (!processed_predecessors.contains(decl)) {
+                processed_predecessors.insert(decl);
+                pred_transformer &pred_pt = ctx.get_pred_transformer(decl);
+                // dvvrd: TODO: multiplex variables if there are several apps of same head
+                // XXX this is an entirely hacky way to obtain child reachability facts!
+                for (expr *fml : pred_pt.m_reach_fmls) {
+                    lemma fake_lemma(m, fml, infty_level());
+                    add_lemma_from_child (pred_pt, &fake_lemma, infty_level());
+                }
             }
         }
+    }
+    for (auto &entry : rels) {
+        pred_transformer *other = entry.m_value;
         if (m_occurrences.approximately_uses(entry.m_key)) {
-            std::cout << m_name << " uses " << other->name() << "\n";
             other->add_use(this);
             if (this != other) {
                 for (lemma *l: other->m_frames.lemmas()) {
-                    std::cout << m_name << ": adding child lemma " << mk_pp(l->get_expr(), m) << " from " << other->name() << "\n";
                     add_lemma_from_child(*other, l, next_level(l->level()));
                 }
             }
@@ -1997,13 +2055,14 @@ void pred_transformer::init_rules(decls2rel const& pts) {
 
     if (m_pt_rules.empty()) {
         m_transition = m.mk_false();
-        m_transition_clause.reset();
+        m_transition_clauses.reset();
     }
     else {
         unsigned i = 0;
         expr_ref_vector transitions(m);
+        expr_ref_vector transition_clause(m);
         for (auto &entry : m_extend_lits) {
-            m_transition_clause.push_back(entry.m_value->get_arg(0));
+            transition_clause.push_back(entry.m_value->get_arg(0));
         }
         for (auto *head : m_heads) {
             for (auto &kv : m_pt_rules) {
@@ -2011,23 +2070,21 @@ void pred_transformer::init_rules(decls2rel const& pts) {
                 std::string name = head->get_name().str() + "__tr" + std::to_string(i);
                 tag = m.mk_const(symbol(name.c_str()), m.mk_bool_sort());
                 m_pt_rules.set_tag(tag, r);
-                m_transition_clause.push_back(tag);
+                transition_clause.push_back(tag);
                 transitions.push_back(m.mk_implies(r.tag(), r.trans()));
                 if (!r.is_init()) {not_inits.push_back(m.mk_not(tag));}
                 const app_ref_vector &app_tags = m_pt_rules.mk_app_tags(m, r);
-                // dvvrd: TODO: really push into m_transition_clause?
                 transitions.push_back(m.mk_implies(tag, mk_and(app_tags)));
                 ++i;
             }
         }
 
-        if (!ctx.use_inc_clause()) {
-            // dvvrd: TODO: it seems that we encode clauses R1, R2 into "(t1 => R1) & (t2 => R_1) & (t_1 | t_2)"
-            // dvvrd: in this case in multi-head variant we should generate tag disj like "...  & (t_1 | t_2) & (s_1 | s_2)"
-            transitions.push_back(mk_or(m_transition_clause));
-            m_transition_clause.reset();
-        }
+//        if (!ctx.use_inc_clause()) {
+            transitions.push_back(mk_or(transition_clause));
+            m_transition_clauses.reset();
+//        }
         m_transition = mk_and(transitions);
+//        m_transition_clauses.push_back(transition_clause);
     }
     // mk init condition -- disables all non-initial transitions
     m_init = mk_and(not_inits);
@@ -2168,10 +2225,12 @@ void pred_transformer::add_premises(decls2rel const& pts, unsigned lvl, expr_ref
     if (lvl == 0) {r.push_back(m_init);}
     else {
         r.push_back(m_transition);
-        if (!m_transition_clause.empty()) {
-            expr_ref c(m);
-            c = mk_or(m_transition_clause);
-            r.push_back(c);
+        for (auto &tc : m_transition_clauses) {
+            if (!tc.empty()) {
+                expr_ref c(m);
+                c = mk_or(tc);
+                r.push_back(c);
+            }
         }
     }
     for (unsigned i = 0; i < rules().size(); ++i) {
@@ -2218,7 +2277,12 @@ app* pred_transformer::extend_initial (func_decl *head, expr *e)
     // -- extend the initial condition
     ic = m.mk_or (old_lit, e, v);
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [extend_initial]: asserting " << mk_pp(ic, m) << "\n";);
+    std::cout << m_name << ": EXTEND INITIAL: ASSERTING " << mk_pp(ic, m) << "\n";
     m_solver->assert_expr (ic);
+    for (pred_transformer *pt : subsumers()) {
+        std::cout << pt->m_name << ": EXTEND INITIAL: ASSERTING " << mk_pp(ic, m) << "\n";
+        pt->m_solver->assert_expr (ic);
+    }
 
     app_ref result(m.mk_not (v), m);
     // -- remember the new extend literal
@@ -2234,6 +2298,9 @@ app* pred_transformer::extend_initial (func_decl *head, expr *e)
 /// pred_transformer::frames
 bool pred_transformer::frames::add_lemma(lemma *new_lemma)
 {
+    std::cout << "add-lemma: " << pp_level(new_lemma->level()) << " "
+          << m_pt.name() << " "
+          << mk_pp(new_lemma->get_expr(), m_pt.get_ast_manager()) << "\n";
     TRACE("spacer", tout << "add-lemma: " << pp_level(new_lemma->level()) << " "
           << m_pt.name() << " "
           << mk_pp(new_lemma->get_expr(), m_pt.get_ast_manager()) << "\n";);
@@ -2327,8 +2394,10 @@ bool pred_transformer::frames::add_lemma(lemma *new_lemma)
 // adds lemma core to m_pt
 void pred_transformer::frames::propagate_to_infinity (unsigned level)
 {
+    std::cout << m_pt.name() << " propagate_to_infinity " << level << "\n";
     for (unsigned i = 0, sz = m_lemmas.size (); i < sz; ++i)
         if (m_lemmas[i]->level() >= level && !is_infty_level(m_lemmas [i]->level())) {
+            std::cout << m_pt.name() << ": SETTING LEVEL 'INF' for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
             m_lemmas [i]->set_level (infty_level ());
             m_pt.add_lemma_core (m_lemmas [i]);
             m_sorted = false;
@@ -2345,6 +2414,7 @@ void pred_transformer::frames::sort ()
 
 bool pred_transformer::frames::propagate_to_next_level (unsigned level)
 {
+    std::cout << m_pt.name() << " propagate_to_next_level " << level << "\n";
     sort ();
     bool all = true;
 
@@ -2359,6 +2429,7 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
 
         unsigned solver_level;
         if (m_pt.is_invariant(tgt_level, m_lemmas.get(i), solver_level)) {
+            std::cout << m_pt.name() << ": SETTING LEVEL " << solver_level << " for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
             m_lemmas [i]->set_level (solver_level);
             m_pt.add_lemma_core (m_lemmas.get(i));
 
@@ -2541,7 +2612,7 @@ comparison_result pt_subsumption_comparator::operator()(const pred_transformer &
     for (unsigned j = 0; i < sz && j < large.size() - sz + i + 1; ++j) {
         if (small[i] == large[j]) ++i;
     }
-    return i < small.size()
+    return i < sz
             ? comparison_result::incomparable
             : (small.size() == large.size()
                 ? comparison_result::equal
@@ -2657,7 +2728,7 @@ pred_transformer& context::get_pred_transformer(func_decl* p) const
 
 pred_transformer& context::get_pred_transformer(func_decl_ptr_vector& p)
 {
-    if (p.size() > 2) {
+    if (p.size() > 1) {
         std::sort(p.begin(), p.end(), func_decl_lt_proc());
     }
     auto *e = m_rels.find_core(p);
@@ -2706,6 +2777,7 @@ void context::init_rules(const datalog::rule_set& rules, decls2rel& rels)
 
     // Initialize use list dependencies
     for (auto &entry : rels) {
+        m_pt_subsumptions.insert(*entry.m_value);
         func_decl_ptr_vector& preds = entry.m_key;
         SASSERT(preds.size() == 1);
         func_decl* pred = preds[0];
@@ -2735,11 +2807,6 @@ pred_transformer &context::init_merged_pred_transformer(const func_decl_ptr_vect
 {
     pred_transformer *pt = alloc(pred_transformer, *this, get_manager(), preds);
     ptr_vector<pred_transformer> pts;
-    std::cout << "init_merged_pred_transformer(";
-    for (auto *h : preds) {
-        std::cout << h->get_name() << " ";
-    }
-    std::cout << ")\n";
     for (auto *pred : preds) {
         pts.push_back(&get_pred_transformer(pred));
     }
@@ -2994,6 +3061,9 @@ void context::init_global_smt_params() {
 void context::init_lemma_generalizers()
 {
     reset_lemma_generalizers();
+    std::cout << "m_q3_qgen: " << m_q3_qgen << ", m_use_euf_gen " << m_use_euf_gen
+              << ", m_use_ind_gen " << m_use_ind_gen << ", m_use_array_eq_gen " << m_use_array_eq_gen
+              << ", m_validate_lemmas " << m_validate_lemmas << "\n";
 
     if (m_q3_qgen) {
         m_lemma_generalizers.push_back(alloc(lemma_bool_inductive_generalizer,
@@ -3057,8 +3127,14 @@ lbool context::solve(unsigned from_lvl)
         else {
             m_last_result = solve_core (from_lvl);
         }
+        std::cout << "SOLVE CORE FINISHED!!!!\n";
+        std::cout << m_last_result << "\n";
+        std::cout.flush();std::cout.flush();std::cout.flush();
 
         if (m_last_result == l_false) {
+            std::cout << "m_last_result == l_false\n";
+            std::cout << mk_pp(mk_unsat_answer(), m);
+            std::cout.flush();std::cout.flush();std::cout.flush();
             simplify_formulas();
             m_last_result = l_false;
             IF_VERBOSE(1, {
@@ -3788,8 +3864,6 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
     predecessor_eh();
 
-    // dvvrd: cube = core
-    // dvvrd: r = rule evaluating to true in model
     lbool res = n.pt ().is_reachable (n, &cube, &model, uses_level, is_concrete, rules,
                                       reach_pred_used, num_reuse_reach);
     if (model) model->set_model_completion(false);
@@ -3801,6 +3875,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // update stats
         m_stats.m_num_reuse_reach += num_reuse_reach;
 
+        bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
         for (unsigned i = 0; i < rules.size(); ++i) {
             const datalog::rule *r = rules[i];
@@ -3816,7 +3891,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         }
 
         // must-reachable
-        if (is_concretely_reachable) {
+        if (is_concretely_reachable && all_rules_covered) {
             // if n has a derivation, create a new child and report l_undef
             // otherwise if n has no derivation or no new children, report l_true
             pob *next = nullptr;
@@ -3852,16 +3927,18 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             return next ? l_undef : l_true;
         }
 
-        // create a child of n
-        STRACE("spacer",
-                tout << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
-                     <<  "] (" << n.pt().name() << ") "
-                     << mk_pp(n.post(), m) << "\n";);
-        out.push_back(&n);
-        VERIFY(create_children (n, rules, *model, reach_pred_used, out));
-        IF_VERBOSE(1, verbose_stream () << " U "
-                   << std::fixed << std::setprecision(2)
-                   << watch.get_seconds () << "\n";);
+        if (!is_concretely_reachable) {
+            // create a child of n
+            STRACE("spacer",
+                    tout << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
+                         <<  "] (" << n.pt().name() << ") "
+                         << mk_pp(n.post(), m) << "\n";);
+            out.push_back(&n);
+            VERIFY(create_children (n, rules, *model, reach_pred_used, out));
+            IF_VERBOSE(1, verbose_stream () << " U "
+                       << std::fixed << std::setprecision(2)
+                       << watch.get_seconds () << "\n";);
+        }
         return l_undef;
 
     }
@@ -3897,6 +3974,10 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             sanity_checker(lemma);
             );
 
+
+        std::cout << "invariant state: "
+              << lemma->level() << " "
+              <<  mk_pp(lemma->get_expr(), m) << "\n";
 
         TRACE("spacer", tout << "invariant state: "
               << (is_infty_level(lemma->level())?"(inductive)":"")
@@ -3988,6 +4069,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 bool context::propagate(unsigned min_prop_lvl,
                         unsigned max_prop_lvl, unsigned full_prop_lvl)
 {
+    std::cout << "propagate " << min_prop_lvl << " " << max_prop_lvl << " " << full_prop_lvl << "\n";
     scoped_watch _w_(m_propagate_watch);
 
     if (min_prop_lvl == infty_level()) { return false; }
@@ -4019,7 +4101,7 @@ bool context::propagate(unsigned min_prop_lvl,
         for (auto & kv : m_rels) {
             checkpoint();
             pred_transformer& r = *kv.m_value;
-            all_propagated = r.propagate_to_next_level(lvl) && all_propagated;
+            all_propagated &= r.propagate_to_next_level(lvl);
         }
         //CASSERT("spacer", check_invariant(lvl));
 
@@ -4052,7 +4134,7 @@ bool context::propagate(unsigned min_prop_lvl,
 
 reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
 {
-    SASSERT(&n.pt() == this);
+//    SASSERT(&n.pt() == this);
     timeit _timer1 (is_trace_enabled("spacer_timeit"),
                     "mk_rf",
                     verbose_stream ());
@@ -4097,7 +4179,6 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
         compute_implicant_literals (mdl, u, lits);
         res = mk_and (lits);
     }
-
 
     TRACE ("spacer",
            tout << "Reach fact, before QE:\n";
@@ -4145,11 +4226,9 @@ bool context::create_children(pob& n,
                               const vector<bool> &reach_pred_used,
                               pob_ref_buffer &out)
 {
+    std::cout << "create-children " << n.pt().name() << "\n";
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
-
-    func_decl_ptr_vector preds;
-    pt.find_predecessors(rules, preds);
 
     // obtain all formulas to consider for model generalization
     expr_ref_vector forms(m), lits(m);
@@ -4189,9 +4268,13 @@ bool context::create_children(pob& n,
                tout << "Failed to eliminate: " << vars << "\n";
         );
 
-    if (m_use_gpdr && preds.size() > 1) {
-        SASSERT(vars.empty());
-        return gpdr_create_split_children(n, rules, phi, mdl, out);
+    if (m_use_gpdr) {
+        func_decl_ptr_vector preds;
+        pt.find_predecessors(rules, preds);
+        if (preds.size() > 1) {
+            SASSERT(vars.empty());
+            return gpdr_create_split_children(n, rules, phi, mdl, out);
+        }
     }
 
     derivation *deriv = alloc(derivation, n, phi, vars);
@@ -4232,27 +4315,31 @@ bool context::create_children(pob& n,
 
     func_decl_ptr_vector heads;
     svector<unsigned> subst;
-    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
-        if (reach_pred_used[i]) {
-            pred_transformer &pt = get_pred_transformer(preds.get(i));
-            const ptr_vector<app> *aux = nullptr;
-            expr_ref sum(m);
-            sum = pt.get_origin_summary (mdl, prev_level(n.level()), i, true, &aux);
-            if (!sum) {
-                dealloc(deriv);
-                return false;
-            }
-            deriv->add_reachability_premise(pt, i, sum, aux);
-        } else {
-            heads.push_back(preds[i]);
-            subst.push_back(i);
+    unsigned idx = 0;
+    for (const datalog::rule *r : rules) {
+        for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i, ++idx) {
+//            if (reach_pred_used[idx]) {
+//                pred_transformer &pt = get_pred_transformer(r->get_tail(i)->get_decl());
+//                const ptr_vector<app> *aux = nullptr;
+//                expr_ref sum(m);
+//                sum = pt.get_origin_summary (mdl, prev_level(n.level()), i, true, &aux);
+//                if (!sum) {
+//                    dealloc(deriv);
+//                    return false;
+//                }
+//                deriv->add_reachability_premise(pt, i, sum, aux);
+//            } else {
+                heads.push_back(r->get_tail(i)->get_decl());
+                subst.push_back(i);
+//            }
         }
     }
 
-    pred_transformer &premise_pt = get_pred_transformer(preds);
-    deriv->add_summary_premise(premise_pt, subst);
-
     SASSERT(!heads.empty());
+
+    pred_transformer &premise_pt = get_pred_transformer(heads);
+    std::cout << "creating child " << premise_pt.name() << "\n";
+    deriv->add_summary_premise(premise_pt, subst);
 
     // create post for the first child and add to queue
     pob* kid = deriv->create_first_child (mdl);
