@@ -74,7 +74,6 @@ typedef map<func_decl_ptr_vector, pred_transformer*, func_decl_ptr_vector_hash, 
 
 typedef obj_map<datalog::rule const, app_ref_vector*> rule2inst;
 typedef obj_map<func_decl, pred_transformer*> decl2rel;
-typedef obj_map<func_decl, app*> decl2app;
 
 class pob;
 typedef ref<pob> pob_ref;
@@ -420,6 +419,8 @@ class pred_transformer {
         bool empty() {return m_rules.empty();}
         iterator begin() const {return m_rules.begin();}
         iterator end() const {return m_rules.end();}
+
+        void reset() { m_rules.reset(); }
     };
 
     class occurrence_cache {
@@ -483,7 +484,8 @@ class pred_transformer {
     vector<expr_ref_vector>      m_transition_clauses; // extra clause for trans
     expr_ref                     m_transition;      // transition relation
     expr_ref                     m_init;            // initial condition
-    decl2app                     m_extend_lits;     // current literal to extend initial state
+    app_ref                      m_extend_lit0;     // first literal used to extend initial state
+    app_ref                      m_extend_lit;      // current literal to extend initial state
     bool                         m_all_init;        // true if the pt has no uninterpreted body in any rule
     func_decl_ptr_vector         m_predicates;      // temp vector used with find_predecessors()
     stats                        m_stats;
@@ -494,7 +496,7 @@ class pred_transformer {
 
     void init_sig();
     symbol mk_name() const;
-    void mk_extend_lits();
+    app_ref mk_extend_lit() const;
     void ensure_level(unsigned level);
     void add_lemma_core (lemma *lemma, bool ground_only = false);
     void add_lemma_from_child (pred_transformer &child, lemma *lemma,
@@ -521,7 +523,9 @@ class pred_transformer {
 
 public:
     pred_transformer(context& ctx, manager& pm, func_decl_ptr_vector const& heads);
-    ~pred_transformer() { for (auto &entry : m_extend_lits) m.dec_ref(entry.m_value); }
+    ~pred_transformer() {
+        if (m_heads.size() > 1) { m_pt_rules.reset(); }
+    }
 
     inline bool use_native_mbp ();
     reach_fact *get_rf (expr *v) {
@@ -671,7 +675,7 @@ public:
                           bool is_init);
 
     /// \brief Adds a given expression to the set of initial rules
-    app* extend_initial (func_decl *head, expr *e);
+    app* extend_initial (expr *e);
 
     /// \brief Returns true if the obligation is already blocked by current lemmas
     bool is_blocked (pob &n, unsigned &uses_level);

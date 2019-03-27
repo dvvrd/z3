@@ -930,13 +930,18 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_ptr_vect
     m_reach_facts(),
     m_reach_fmls(m),
     m_transition(m), m_init(m),
+    m_extend_lit0(m), m_extend_lit(m),
     m_all_init(false)
 {
     std::cout << m_name << "'s reach_solver: " << (long)(m_reach_solver.get()) << "\n";
     m_solver = alloc(prop_solver, m, ctx.mk_solver0(), ctx.mk_solver1(),
                      ctx.get_params(), m_name);
     init_sig();
-    mk_extend_lits();
+
+    if (heads.size() == 1) {
+        m_extend_lit = mk_extend_lit();
+        m_extend_lit0 = m_extend_lit;
+    }
 }
 
 
@@ -950,15 +955,13 @@ symbol pred_transformer::mk_name() const
     return symbol(buffer.c_str());
 }
 
-void pred_transformer::mk_extend_lits() {
+app_ref pred_transformer::mk_extend_lit() const {
     app_ref v(m);
     std::stringstream name;
     for (auto *head : m_heads) {
         name << head->get_name () << "_ext0";
         v = m.mk_const (symbol(name.str().c_str()), m.mk_bool_sort());
-        app *lit = m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ())));
-        m.inc_ref(lit);
-        m_extend_lits.insert(head, lit);
+        return app_ref(m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ()))), m);
     }
 }
 
@@ -1376,7 +1379,7 @@ void pred_transformer::add_rf (reach_fact *rf)
         new_tag = mk_fresh_rf_tag(rf->get_rule().get_decl());
     else
         // side-effect: updates m_solver with rf
-        new_tag = to_app(extend_initial(rf->get_rule().get_decl(), rf->get())->get_arg(0));
+        new_tag = to_app(extend_initial(rf->get())->get_arg(0));
     rf->set_tag(new_tag);
 
     // add to m_reach_facts
@@ -1766,8 +1769,8 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     // result is either sat (with some reach assumps) or
     // unsat (even with no reach assumps)
     ptr_vector<expr> bg;
-    for (auto &entry : m_extend_lits) {
-        bg.push_back(entry.m_value);
+    for (func_decl *h : m_heads) {
+        bg.push_back(ctx.get_pred_transformer(h).m_extend_lit);
     }
     lbool is_sat = m_solver->check_assumptions(post, reach_assumps,
                                                m_transition_clauses,
@@ -1923,8 +1926,8 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
     m_solver->set_core(core);
     m_solver->set_model(mdl_ref_ptr);
 
-    for (auto &entry : m_extend_lits) {
-        conj.push_back(entry.m_value);
+    for (func_decl *h : m_heads) {
+        conj.push_back(ctx.get_pred_transformer(h).m_extend_lit);
     }
     if (ctx.use_bg_invs()) get_pred_bg_invs(conj);
 
@@ -1973,8 +1976,8 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
     m_solver->set_model (nullptr);
     expr_ref_vector aux (m);
     if (ctx.use_bg_invs()) get_pred_bg_invs(conj);
-    for (auto &entry : m_extend_lits) {
-        conj.push_back(entry.m_value);
+    for (func_decl *h : m_heads) {
+        conj.push_back(ctx.get_pred_transformer(h).m_extend_lit);
     }
     STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [check_inductive]: checking " << state.size() << " assumptions for ";);
     for (auto &p : state) {
@@ -2064,13 +2067,6 @@ void pred_transformer::merge(const ptr_vector<pred_transformer> &pts)
     m_init = mk_and(init);
     m_pt_rules.merge(pts);
 
-    m_extend_lits.reset();
-    for (pred_transformer *pt : pts) {
-        for (auto &e : pt->m_extend_lits) {
-            m_extend_lits.insert(&e.get_key(), e.get_value());
-        }
-    }
-
     m_solver->assert_expr (m_transition);
     m_solver->assert_expr (m_init, 0);
 }
@@ -2145,9 +2141,7 @@ void pred_transformer::init_rules(decls2rel const& pts) {
         unsigned i = 0;
         expr_ref_vector transitions(m);
         expr_ref_vector transition_clause(m);
-        for (auto &entry : m_extend_lits) {
-            transition_clause.push_back(entry.m_value->get_arg(0));
-        }
+        transition_clause.push_back (m_extend_lit->get_arg(0));
         for (auto *head : m_heads) {
             for (auto &kv : m_pt_rules) {
                 pt_rule &r = *kv.m_value;
@@ -2163,12 +2157,12 @@ void pred_transformer::init_rules(decls2rel const& pts) {
             }
         }
 
-//        if (!ctx.use_inc_clause()) {
+//        if (ctx.use_inc_clause()) {
+//            m_transition_clauses.push_back(transition_clause);
+//        } else {
             transitions.push_back(mk_or(transition_clause));
-            m_transition_clauses.reset();
 //        }
         m_transition = mk_and(transitions);
-//        m_transition_clauses.push_back(transition_clause);
     }
     // mk init condition -- disables all non-initial transitions
     m_init = mk_and(not_inits);
@@ -2342,39 +2336,32 @@ void pred_transformer::add_premises(decls2rel const& pts, unsigned lvl,
 void pred_transformer::inherit_lemmas(pred_transformer& other)
 {m_frames.inherit_frames (other.m_frames);}
 
-app* pred_transformer::extend_initial (func_decl *head, expr *e)
+app* pred_transformer::extend_initial (expr *e)
 {
-    SASSERT(m_extend_lits.contains(head));
+    SASSERT(m_heads.size() == 1);
     // create fresh extend literal
     std::stringstream name;
-    name << head->get_name() << "_ext";
+    name << m_name << "_ext";
     app_ref o(m);
     o = m.mk_fresh_const (name.str ().c_str (),
                           m.mk_bool_sort ());
     app_ref v(m);
     v = m.mk_const (pm.get_n_pred (o->get_decl ()));
-    pm.associate(o->get_decl(), head);
+    pm.associate(o->get_decl(), m_heads[0]);
 
     expr_ref ic(m);
 
-    app *old_lit = m_extend_lits.find(head);
     // -- extend the initial condition
-    ic = m.mk_or (old_lit, e, v);
-    STRACE("spacer", tout << "[dvvrd] SOLVER [" << m_name << "] [extend_initial]: asserting " << mk_pp(ic, m) << "\n";);
-    std::cout << m_name << ": EXTEND INITIAL: ASSERTING " << mk_pp(ic, m) << "\n";
+    ic = m.mk_or (m_extend_lit, e, v);
     m_solver->assert_expr (ic);
     for (pred_transformer *pt : subsumers()) {
-        std::cout << pt->m_name << ": EXTEND INITIAL: ASSERTING " << mk_pp(ic, m) << "\n";
         pt->m_solver->assert_expr (ic);
     }
 
-    app_ref result(m.mk_not (v), m);
     // -- remember the new extend literal
-    m.dec_ref(old_lit);
-    m.inc_ref(result);
-    m_extend_lits.insert(head, result);
+    m_extend_lit = m.mk_not (v);
 
-    return result;
+    return m_extend_lit;
 }
 
 
