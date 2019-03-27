@@ -85,6 +85,13 @@ public:
     func_decl * shift_decl(func_decl * sym, unsigned src_idx, unsigned tgt_idx) const;
 
     /**
+      \brief Convert symbol sym which has to be of src_idx variant
+      into variant tgt_idx.
+    */
+    func_decl * shift_decl(func_decl * sym, unsigned src_idx,
+                           const sym_mux::idx_subst &tgt_idcs) const;
+
+    /**
       \brief Convert src_idx symbols in formula f variant into
       tgt_idx.  If homogenous is true, formula cannot contain symbols
       of other variants.

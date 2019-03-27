@@ -559,6 +559,7 @@ public:
     void     add_cover(unsigned level, expr* property, bool bg = false);
     expr_ref get_reachable();
     pt_collection subsumers();
+    pt_collection subsumed();
 
     std::ostream& display(std::ostream& strm) const;
 
@@ -572,7 +573,9 @@ public:
     /// \brief Returns reachability fact active in the origin of the given model
     reach_fact* get_used_origin_rf(model &mdl, unsigned oidx);
     expr_ref get_origin_summary(model &mdl,
-                                unsigned level, unsigned oidx, bool must,
+                                unsigned level,
+                                const sym_mux::idx_subst &oidcs,
+                                bool must,
                                 const ptr_vector<app> **aux);
 
     bool is_ctp_blocked(lemma *lem);
@@ -652,7 +655,7 @@ public:
     bool check_inductive(unsigned level, expr_ref_vector& state,
                          unsigned& assumes_level, unsigned weakness = UINT_MAX);
 
-    expr_ref get_formulas(unsigned level, bool bg = false) const;
+    expr_ref get_formulas(unsigned level, bool bg = false);
 
     void simplify_formulas();
 
@@ -840,7 +843,7 @@ class derivation {
     class premise {
         pred_transformer &m_pt;
         /// origin orders in the rule
-        svector<unsigned> m_oidcs;
+        sym_mux::idx_subst m_oidcs;
         /// summary fact corresponding to the premise
         expr_ref m_summary;
         ///  whether this is a must or may premise
@@ -848,15 +851,15 @@ class derivation {
         app_ref_vector m_ovars;
 
     public:
-        premise (pred_transformer &pt, unsigned oidx, expr *summary,
+        premise (pred_transformer &pt, func_decl *decl, unsigned oidx, expr *summary,
                  const ptr_vector<app> *aux_vars = nullptr);
-        premise (pred_transformer &pt, const svector<unsigned> &oidcs);
+        premise (pred_transformer &pt, const sym_mux::idx_subst &oidcs, expr *summary);
         premise (const premise &p);
 
         bool is_must() {return m_must;}
         expr * get_summary() {return m_summary.get ();}
-        app_ref_vector &get_ovars() {return m_ovars;}
-        const svector<unsigned> &get_oidcs() {return m_oidcs;}
+        const app_ref_vector &get_ovars() {return m_ovars;}
+        const sym_mux::idx_subst &get_oidcs() {return m_oidcs;}
         pred_transformer &pt() {return m_pt;}
 
         /// \brief Updated the summary.
@@ -884,9 +887,12 @@ class derivation {
     void exist_skolemize(expr *fml, app_ref_vector &vars, expr_ref &res);
 public:
     derivation (pob& parent, expr *trans, app_ref_vector const &evars);
-    void add_reachability_premise (pred_transformer &pt, unsigned oidx, expr * summary,
+    void add_reachability_premise (pred_transformer &pt,
+                                   func_decl *decl, unsigned oidx,
+                                   expr * summary,
                                    const ptr_vector<app> *aux_vars = nullptr);
-    void add_summary_premise (pred_transformer &pt, const svector<unsigned> &subst);
+    void add_summary_premise (pred_transformer &pt, const sym_mux::idx_subst &subst,
+                              expr *summary);
 
     /// creates the first child. Must be called after all the premises
     /// are added. The model must be valid for the premises
@@ -1168,6 +1174,7 @@ public:
     pred_transformer& get_pred_transformer(func_decl* p) const;
     pred_transformer& get_pred_transformer(func_decl_ptr_vector& p);
     pt_collection subsumers(pred_transformer &pt);
+    pt_collection subsumed(pred_transformer &pt);
 
     datalog::context& get_datalog_context() const {
         SASSERT(m_context); return *m_context;

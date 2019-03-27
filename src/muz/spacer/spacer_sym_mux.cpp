@@ -98,6 +98,20 @@ func_decl * sym_mux::shift_decl(func_decl * decl,
     return nullptr;
 }
 
+func_decl *sym_mux::shift_decl(func_decl *sym, unsigned src_idx,
+                               const sym_mux::idx_subst &tgt_idcs) const
+{
+    std::pair<sym_mux_entry*,unsigned> entry;
+    if (m_muxes.find(sym, entry)) {
+        SASSERT(entry.second == src_idx);
+        unsigned tgt_idx = tgt_idcs.find(entry.first->m_associated);
+        ensure_capacity(*entry.first, tgt_idx + 1);
+        return entry.first->m_variants.get(tgt_idx);
+    }
+    UNREACHABLE();
+    return nullptr;
+}
+
 namespace {
 struct formula_checker {
     formula_checker(const sym_mux & parent, unsigned idx) :

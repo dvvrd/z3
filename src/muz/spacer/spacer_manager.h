@@ -101,8 +101,13 @@ public:
     {return m_mux.shift_decl(p, o_index(o_idx), n_index());}
     func_decl * o2o(func_decl * p, unsigned src_idx, unsigned tgt_idx) const
     {return m_mux.shift_decl(p, o_index(src_idx), o_index(tgt_idx));}
+    func_decl * o2o(func_decl * p, unsigned src_idx,
+                    const sym_mux::idx_subst &tgt_idcs) const
+    {return m_mux.shift_decl(p, o_index(src_idx), tgt_idcs);}
     func_decl * n2o(func_decl * p, unsigned o_idx) const
     {return m_mux.shift_decl(p, n_index(), o_index(o_idx));}
+    func_decl * n2o(func_decl * p, const sym_mux::idx_subst &o_idcs) const
+    {return m_mux.shift_decl(p, n_index(), o_idcs);}
 
     void associate(func_decl *p, func_decl *associated)
     {m_mux.associate(p, associated);}
@@ -130,6 +135,8 @@ public:
     {m_mux.shift_expr(src, o_index(src_idx), o_index(tgt_idx),
                         tgt, homogenous);}
 
+    void add_o_subst(sym_mux::idx_subst &subst, func_decl *p, unsigned o_idx) const
+    { subst.insert(p, o_index(o_idx)); }
 };
 
 /** Skolem constants for quantified spacer */
