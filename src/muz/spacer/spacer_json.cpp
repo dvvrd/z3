@@ -161,9 +161,11 @@ std::ostream &json_marshaller::marshal(std::ostream &out) const {
                 std::ostringstream heads;
                 json_marshal(pob_expr, n->post(), n->get_ast_manager());
                 auto const& head_decls = n->pt().heads();
-                heads << "\"" << head_decls[0]->get_name() << "\"";
+                heads << "(\"" << head_decls[0].func->get_name() << "\","
+                      << head_decls[0].count << ")";
                 for (unsigned i = 1; i < head_decls.size(); ++i) {
-                    heads << "," << "\"" << head_decls[i]->get_name() << "\"";
+                    heads << ",(\"" << head_decls[i].func->get_name()
+                          << "\", " << head_decls[i].count << ")";
                 }
 
                 nodes << ((unsigned)nodes.tellp() == 0 ? "" : ",\n") <<

@@ -38,7 +38,10 @@ struct ground_sat_answer_op::frame {
         }
     }
 
-    func_decl* head() {SASSERT(m_pt.heads().size() == 1); return m_pt.heads()[0];}
+    func_decl* head() {
+        SASSERT(m_pt.heads().size() == 1 && m_pt.heads()[0].count == 1);
+        return m_pt.heads()[0].func;
+    }
     expr* fact() {return m_fact;}
     const datalog::rule &rule() {return m_rf->get_rule();}
     pred_transformer &pt() {return m_pt;}
@@ -57,8 +60,8 @@ proof_ref ground_sat_answer_op::operator()(pred_transformer &query) {
 
     // -- find substitution for a query if query is not nullary
     expr_ref_vector qsubst(m);
-    SASSERT(query.heads().size() == 1);
-    if (query.heads()[0]->get_arity() > 0) {
+    SASSERT(query.heads().size() == 1 && query.heads()[0].count == 1);
+    if (query.heads()[0].func->get_arity() > 0) {
         solver::scoped_push _s_(*m_solver);
         m_solver->assert_expr(query.get_last_rf()->get());
         lbool res = m_solver->check_sat(0, nullptr);

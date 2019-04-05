@@ -123,6 +123,7 @@ void prop_solver::assert_expr(expr * form)
     m_contexts[1]->assert_expr(form);
     IF_VERBOSE(21, verbose_stream() << "$ asserted " << mk_pp(form, m) << "\n";);
     TRACE("spacer", tout << "add_formula: " << mk_pp(form, m) << "\n";);
+    std::cout << "add_formula: " << mk_pp(form, m) << "\n";
 }
 
 void prop_solver::assert_expr(expr * form, unsigned level)

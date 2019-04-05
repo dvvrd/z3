@@ -227,8 +227,8 @@ void model_search::remove_node(model_node* _n, bool backtrack) {
 
 lbool context::gpdr_solve_core() {
     scoped_watch _w_(m_solve_watch);
-    ptr_vector<func_decl> key;
-    key.push_back(m_query_pred);
+    func_decl_multivector key;
+    key.push_back({m_query_pred, 1});
     //if there is no query predicate, abort
     if (!m_rels.find(key, m_query)) { return l_false; }
 
@@ -307,24 +307,23 @@ bool context::gpdr_check_reachability(unsigned lvl, model_search &ms) {
 }
 
 bool context::gpdr_create_split_children(pob &n,
-                                         const ptr_vector<const datalog::rule> &rules,
+                                         const vector<versioned_func> &preds,
                                          expr *trans,
                                          model &mdl,
                                          pob_ref_buffer &out) {
-    pred_transformer &pt = n.pt();
-    ptr_vector<func_decl> preds;
-    pt.find_predecessors(rules, preds);
     SASSERT(preds.size() > 1);
 
     ptr_vector<pred_transformer> ppts;
-    for (auto *p : preds) ppts.push_back(&get_pred_transformer(p));
+    for (auto &p : preds) ppts.push_back(&get_pred_transformer(p.func));
 
     mbc::partition_map pmap;
     for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
-        func_decl *p = preds.get(i);
+        const versioned_func &vp = preds.get(i);
+        func_decl *p = vp.func;
+        unsigned version = vp.version;
         pred_transformer &ppt = *ppts.get(i);
         for (unsigned j = 0, jsz = p->get_arity(); j < jsz; ++j) {
-            pmap.insert(m_pm.o2o(ppt.sig(j), 0, i), i);
+            pmap.insert(m_pm.get_version_pred(m_pm.o2o(ppt.sig(j), 0, i), 0, version), i);
         }
     }
 

@@ -50,30 +50,8 @@ class derivation;
 class pob_queue;
 class context;
 
-
-struct func_decl_ptr_vector_hash : public vector_hash_tpl<obj_ptr_hash<func_decl>, ptr_vector<func_decl> > {};
-
-template<typename T>
-struct ptr_vector_eq {
-    bool operator()(ptr_vector<T> const& v1, ptr_vector<T> const& v2) const {
-        if (v1.size() != v2.size()) {
-            return false;
-        }
-        for (unsigned i = 0; i < v1.size(); ++i) {
-            if (v1[i] != v2[i]) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-typedef ptr_vector<func_decl> func_decl_ptr_vector;
-typedef ptr_vector_eq<func_decl> func_decl_ptr_vector_eq;
-typedef map<func_decl_ptr_vector, pred_transformer*, func_decl_ptr_vector_hash, func_decl_ptr_vector_eq> decls2rel;
-
-typedef obj_map<datalog::rule const, app_ref_vector*> rule2inst;
-typedef obj_map<func_decl, pred_transformer*> decl2rel;
+typedef map<func_decl_multivector, pred_transformer*, func_decl_multivector_hash, func_decl_multivector_eq> decls2rel;
+typedef vector<std::pair<const datalog::rule*, unsigned>> versioned_rule_vector;
 
 class pob;
 typedef ref<pob> pob_ref;
@@ -310,9 +288,6 @@ class pred_transformer {
             m_sorted = false;
             m_bg_invs.append(other.m_bg_invs);
         }
-        void inherit_bg_invs (frames &other) {
-            m_bg_invs.append(other.m_bg_invs);
-        }
 
         bool add_lemma (lemma *new_lemma);
         void propagate_to_infinity (unsigned level);
@@ -414,7 +389,6 @@ class pred_transformer {
             m_tags.insert(tag, p);
         }
         const app_ref_vector &mk_app_tags(ast_manager &m, pt_rule &v);
-        void merge(const ptr_vector<pred_transformer> &pts);
 
         bool empty() {return m_rules.empty();}
         iterator begin() const {return m_rules.begin();}
@@ -424,33 +398,80 @@ class pred_transformer {
     };
 
     class occurrence_cache {
-        typedef obj_map<func_decl, unsigned> func_decl_multiset;
         struct occurrence {
             const datalog::rule *rule;
             unsigned idx;
+            unsigned version;
             app *app_tag;
         };
+        typedef obj_map<func_decl, unsigned> func_decl_multiset;
         typedef obj_map<func_decl, vector<occurrence>> occurrence_map;
+        typedef std::pair<const datalog::rule *, unsigned> versioned_rule;
+        typedef versioned_func_map<versioned_rule> rules_cache;
 
         manager &pm;
-        const pt_rules &m_rules;
         func_decl_multiset m_body_multiset;
         occurrence_map m_occurrences;
 
+        class occurrence_matcher {
+            manager &pm;
+            func_decl *m_head;
+            const unsigned m_count;
+            const vector<occurrence> &m_occs;
+            rules_cache &m_used_rules;
+            manager::idx_subst &m_subst;
+            app_ref_vector &m_app_tags;
+            vector<unsigned> m_pointers;
+            unsigned m_app_tags_base;
+            bool m_initialized;
+
+            bool shift_from(unsigned occ_index);
+            bool shift_to(unsigned index, unsigned occ_index);
+            bool shift_to_next(unsigned index);
+
+        public:
+            occurrence_matcher(manager &pm, func_decl *head,
+                                        unsigned count, const vector<occurrence> &occs,
+                                        rules_cache &used_rules,
+                                        manager::idx_subst &subst,
+                                        app_ref_vector &app_tags)
+                : pm(pm),
+                  m_head(head),
+                  m_count(count),
+                  m_occs(occs),
+                  m_used_rules(used_rules),
+                  m_subst(subst),
+                  m_app_tags(app_tags),
+                  m_pointers(count),
+                  m_app_tags_base(m_app_tags.size()),
+                  m_initialized(false)
+            {
+                m_app_tags.resize(m_app_tags_base + m_count);
+            }
+
+            ~occurrence_matcher() {
+                m_app_tags.resize(m_app_tags_base);
+            }
+
+            bool match_next();
+        };
+
         void insert_multiset(func_decl_multiset &set, func_decl *f);
-        bool multiset_contains(const func_decl_multiset &body, func_decl *elem, unsigned count) const;
-        bool covers(const func_decl_multiset &body, const ptr_vector<func_decl> &sorted_decls) const;
-        void mk_assumptions_rec(const func_decl_ptr_vector &heads, unsigned idx,
-                                obj_map<func_decl, const datalog::rule *> &used_rules,
-                                sym_mux::idx_subst &subst,
+        bool multiset_contains(const func_decl_multiset &body,
+                               func_decl *elem, unsigned count) const;
+        bool covers(const func_decl_multiset &body,
+                    const func_decl_multivector &sorted_decls) const;
+        void mk_assumptions_rec(const func_decl_multivector &heads, unsigned idx,
+                                rules_cache &used_rules,
+                                manager::idx_subst &subst,
                                 app_ref_vector &app_tags,
                                 expr *fml,
                                 expr_ref_vector& result);
 
     public:
-        occurrence_cache(manager &pm, const pt_rules &rules);
+        explicit occurrence_cache(manager &pm);
 
-        void init();
+        void init(const vector<std::pair<pt_rules &, unsigned>> &crules);
 
         /// Returns if merged cartesian product of rules may potentially contain the application of merged head.
         /// If the result is false then the predicate transformer does not use the head for sure.
@@ -458,26 +479,26 @@ class pred_transformer {
         /// Computing exact set of users can be shown to be NP-complete.
         /// The final decision is taken by the solver; for that purpose the expressions of the form
         /// (rule_i => app_1 & ... app_n) and (head_1 & ... & head_m => lemma) are asserted.
-        bool approximately_uses(const ptr_vector<func_decl> &head) const;
+        bool approximately_uses(const func_decl_multivector &head) const;
 
-        void mk_assumptions(const func_decl_ptr_vector &heads, expr* fml, expr_ref_vector& result);
+        void mk_assumptions(const func_decl_multivector &heads, expr* fml, expr_ref_vector& result);
     };
 
     manager&                     pm;                // spacer::manager
     ast_manager&                 m;                 // ast_manager
     context&                     ctx;               // spacer::context
 
-    func_decl_ptr_vector         m_heads;           // predicates
+    func_decl_multivector        m_heads;           // predicates
     symbol                       m_name;            // name
-    func_decl_ptr_vector         m_sig;             // signature
+    ptr_vector<func_decl>        m_sig;             // signature
     func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;           // pt rules used to derive transformer
     ptr_vector<datalog::rule>    m_rules;           // rules used to derive transformer
     occurrence_cache             m_occurrences;     // cache for fast building the dependencies graph
     scoped_ptr<prop_solver>      m_solver;          // solver context
-    ref<solver>                  m_reach_solver;       // context for reachability facts
-    pob_manager                         m_pobs;            // proof obligations created so far
+    ref<solver>                  m_reach_solver;    // context for reachability facts
+    pob_manager                  m_pobs;            // proof obligations created so far
     frames                       m_frames;          // frames with lemmas
     reach_fact_ref_vector        m_reach_facts;     // reach facts
     expr_ref_vector              m_reach_fmls;      // ultimate reachability formulas
@@ -487,7 +508,7 @@ class pred_transformer {
     app_ref                      m_extend_lit0;     // first literal used to extend initial state
     app_ref                      m_extend_lit;      // current literal to extend initial state
     bool                         m_all_init;        // true if the pt has no uninterpreted body in any rule
-    func_decl_ptr_vector         m_predicates;      // temp vector used with find_predecessors()
+    ptr_vector<func_decl>        m_predicates;      // temp vector used with find_predecessors()
     stats                        m_stats;
     stopwatch                    m_initialize_watch;
     stopwatch                    m_must_reachable_watch;
@@ -502,7 +523,7 @@ class pred_transformer {
     void add_lemma_from_child (pred_transformer &child, lemma *lemma,
                                unsigned lvl, bool ground_only = false);
 
-    void mk_assumptions(func_decl_ptr_vector const& heads, expr* fml, expr_ref_vector& result);
+    void mk_assumptions(func_decl_multivector const& heads, expr* fml, expr_ref_vector& result);
 
     // Initialization
     void init_rules(decls2rel const& pts);
@@ -519,13 +540,11 @@ class pred_transformer {
     // get tagged formulae of all of the background invariants for all of the
     // predecessors of the current transformer
     void get_pred_bg_invs(expr_ref_vector &out);
+    void get_ext_lits(expr_ref_vector &out) const;
     const lemma_ref_vector &get_bg_invs() const {return m_frames.get_bg_invs();}
 
 public:
-    pred_transformer(context& ctx, manager& pm, func_decl_ptr_vector const& heads);
-    ~pred_transformer() {
-        if (m_heads.size() > 1) { m_pt_rules.reset(); }
-    }
+    pred_transformer(context& ctx, manager& pm, func_decl_multivector const& heads);
 
     inline bool use_native_mbp ();
     reach_fact *get_rf (expr *v) {
@@ -534,20 +553,21 @@ public:
         }
         return nullptr;
     }
-    void find_predecessors(datalog::rule const& r, func_decl_ptr_vector& predicates) const;
-    void find_predecessors(ptr_vector<const datalog::rule> const& rules, func_decl_ptr_vector& predicates) const;
+    void find_predecessors(datalog::rule const& r, ptr_vector<func_decl> & predicates) const;
+    void find_predecessors(versioned_rule_vector const& rules,
+                           vector<versioned_func> & predicates) const;
 
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
     void initialize(decls2rel const& pts);
 
-    void merge(const ptr_vector<pred_transformer> &pts);
+    void merge(const vector<std::pair<pred_transformer*, unsigned>> &pts);
     void subsume_lemmas(const pt_collection &subsumed_pts);
     void merge_child_lemmas(const decls2rel &rels);
 
     symbol const& name() const {return m_name;}
-    func_decl_ptr_vector const& heads() const {return m_heads;}
-    func_decl* merged_head() const {return m_merged_head;};
+    func_decl_multivector const& heads() const {return m_heads;}
+    func_decl* merged_head() const {return m_merged_head;}
     ptr_vector<datalog::rule> const& rules() const {return m_rules;}
     func_decl* sig(unsigned i) const {return m_sig[i];} // signature
     func_decl* const* sig() {return m_sig.c_ptr();}
@@ -555,6 +575,7 @@ public:
     expr*  transition() const {return m_transition;}
     expr*  init() const {return m_init;}
     expr*  rule2tag(datalog::rule const* r) {
+        SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
         pt_rule *p;
         return m_pt_rules.find_by_rule(*r, p) ? p->tag() : nullptr;
     }
@@ -573,45 +594,36 @@ public:
     bool is_must_reachable(expr* state, model_ref* model = nullptr);
     /// \brief Returns reachability fact active in the given model
     /// all determines whether initial reachability facts are included as well
-    reach_fact *get_used_rf(model& mdl, bool all = true);
+    reach_fact *get_used_rf(model& mdl, unsigned version, bool all = true);
     /// \brief Returns reachability fact active in the origin of the given model
     reach_fact* get_used_origin_rf(model &mdl, unsigned oidx);
+    /// \brief Returns reachability fact active in the origin of the given model
+    reach_fact* get_used_origin_rf(model &mdl, const manager::idx_subst &oidcs);
     expr_ref get_origin_summary(model &mdl,
                                 unsigned level,
-                                const sym_mux::idx_subst &oidcs,
+                                const manager::idx_subst &oidcs,
                                 bool must,
                                 const ptr_vector<app> **aux);
 
     bool is_ctp_blocked(lemma *lem);
-    void find_rules(model &mdl, ptr_vector<const datalog::rule>& rules);
+    void find_rules(model &mdl, versioned_rule_vector& rules);
     void find_rules(model &mev, vector<bool>& is_concrete,
                     vector<bool>& reach_pred_used,
                     unsigned& num_reuse_reach,
-                    ptr_vector<const datalog::rule>& rules);
+                    versioned_rule_vector& rules);
     expr* get_transition(datalog::rule const& r) {
+        SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
         pt_rule *p;
         return m_pt_rules.find_by_rule(r, p) ? p->trans() : nullptr;
     }
-    void get_transitions(ptr_vector<const datalog::rule> const& rules, expr_ref_vector &transitions) {
-        for (auto *r : rules) {
-            pt_rule *p;
-            if (m_pt_rules.find_by_rule(*r, p)) {
-                transitions.push_back(p->trans());
-            }
-        }
-    }
+    void get_transitions(versioned_rule_vector const& rules, expr_ref_vector &transitions);
     ptr_vector<app>& get_aux_vars(datalog::rule const& r) {
+        SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
         pt_rule *p = nullptr;
         VERIFY(m_pt_rules.find_by_rule(r, p));
         return p->auxs();
     }
-    void get_aux_vars(ptr_vector<const datalog::rule> const& rules, app_ref_vector& vars) {
-        for (auto *r : rules) {
-            pt_rule *p = nullptr;
-            VERIFY(m_pt_rules.find_by_rule(*r, p));
-            vars.append(p->auxs().size(), p->auxs().c_ptr());
-        }
-    }
+    void get_aux_vars(versioned_rule_vector const& rules, app_ref_vector& vars);
 
     bool propagate_to_next_level(unsigned level);
     void propagate_to_infinity(unsigned level);
@@ -643,7 +655,7 @@ public:
 
     lbool is_reachable(pob& n, expr_ref_vector* core, model_ref *model,
                        unsigned& uses_level, vector<bool>& is_concrete,
-                       ptr_vector<const datalog::rule>& r,
+                       versioned_rule_vector& r,
                        vector<bool>& reach_pred_used,
                        unsigned& num_reuse_reach);
     bool is_invariant(unsigned level, lemma* lem,
@@ -847,7 +859,7 @@ class derivation {
     class premise {
         pred_transformer &m_pt;
         /// origin orders in the rule
-        sym_mux::idx_subst m_oidcs;
+        manager::idx_subst m_oidcs;
         /// summary fact corresponding to the premise
         expr_ref m_summary;
         ///  whether this is a must or may premise
@@ -855,15 +867,15 @@ class derivation {
         app_ref_vector m_ovars;
 
     public:
-        premise (pred_transformer &pt, func_decl *decl, unsigned oidx, expr *summary,
-                 const ptr_vector<app> *aux_vars = nullptr);
-        premise (pred_transformer &pt, const sym_mux::idx_subst &oidcs, expr *summary);
+        premise (pred_transformer &pt, func_decl *decl, unsigned oidx, unsigned version,
+                 expr *summary, const ptr_vector<app> *aux_vars = nullptr);
+        premise (pred_transformer &pt, const manager::idx_subst &oidcs, expr *summary);
         premise (const premise &p);
 
         bool is_must() {return m_must;}
         expr * get_summary() {return m_summary.get ();}
         const app_ref_vector &get_ovars() {return m_ovars;}
-        const sym_mux::idx_subst &get_oidcs() {return m_oidcs;}
+        const manager::idx_subst &get_oidcs() {return m_oidcs;}
         pred_transformer &pt() {return m_pt;}
 
         /// \brief Updated the summary.
@@ -893,9 +905,9 @@ public:
     derivation (pob& parent, expr *trans, app_ref_vector const &evars);
     void add_reachability_premise (pred_transformer &pt,
                                    func_decl *decl, unsigned oidx,
-                                   expr * summary,
+                                   unsigned version, expr * summary,
                                    const ptr_vector<app> *aux_vars = nullptr);
-    void add_summary_premise (pred_transformer &pt, const sym_mux::idx_subst &subst,
+    void add_summary_premise (pred_transformer &pt, const manager::idx_subst &subst,
                               expr *summary);
 
     /// creates the first child. Must be called after all the premises
@@ -1093,7 +1105,7 @@ class context {
     lbool gpdr_solve_core();
     bool gpdr_check_reachability(unsigned lvl, model_search &ms);
     bool gpdr_create_split_children(pob &n,
-                                    const ptr_vector<const datalog::rule> &rules,
+                                    const vector<versioned_func> &preds,
                                     expr *trans,
                                     model &mdl,
                                     pob_ref_buffer &out);
@@ -1107,7 +1119,7 @@ class context {
     bool is_reachable(pob &n);
     lbool expand_pob(pob &n, pob_ref_buffer &out);
     bool create_children(pob& n,
-                         const ptr_vector<datalog::rule const> &rules,
+                         versioned_rule_vector &rules,
                          model &mdl,
                          const vector<bool>& reach_pred_used,
                          pob_ref_buffer &out);
@@ -1131,7 +1143,7 @@ class context {
     void inherit_lemmas(const decls2rel& rels);
     void init_global_smt_params();
     void init_rules(const datalog::rule_set& rules, decls2rel& transformers);
-    pred_transformer &init_merged_pred_transformer(func_decl_ptr_vector const& preds);
+    pred_transformer &init_merged_pred_transformer(func_decl_multivector const& preds);
     // (re)initialize context with new relations
     void init(const decls2rel &rels);
 
@@ -1176,7 +1188,7 @@ public:
     ast_manager&      get_ast_manager() const {return m;}
     manager&          get_manager() {return m_pm;}
     pred_transformer& get_pred_transformer(func_decl* p) const;
-    pred_transformer& get_pred_transformer(func_decl_ptr_vector& p);
+    pred_transformer& get_pred_transformer(ptr_vector<func_decl>& p);
     pt_collection subsumers(pred_transformer &pt);
     pt_collection subsumed(pred_transformer &pt);
 

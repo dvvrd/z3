@@ -137,6 +137,50 @@ namespace spacer {
     mk_epp(ast *t, ast_manager &m, unsigned indent = 0, unsigned num_vars = 0, char const * var_prefix = nullptr);
         void rw(expr *e, expr_ref &out);
     };
+
+    struct versioned_func {
+        func_decl *func;
+        unsigned version;
+        struct hash_proc {
+            unsigned operator()(const versioned_func &f) const {
+                return combine_hash(f.func->hash(), hash_u(f.version));
+            }
+        };
+        struct eq_proc {
+            bool operator()(const versioned_func &f1, const versioned_func &f2) const {
+                return f1.func == f2.func && f1.version == f2.version;
+            }
+        };
+    };
+    struct versioned_func_hash {
+        unsigned operator()(versioned_func &f) const {
+            return combine_hash(f.func->hash(), hash_u(f.version));
+        }
+    };
+
+    template<typename T>
+    using versioned_func_map = map<versioned_func, T, versioned_func::hash_proc, versioned_func::eq_proc>;
+
+    struct multifunc {
+        func_decl *func;
+        unsigned count;
+        friend inline bool operator==(const multifunc &f1, const multifunc &f2) {
+            return f1.func == f2.func && f1.count == f2.count;
+        }
+        friend inline bool operator!=(const multifunc &f1, const multifunc &f2) {
+            return !(f1 == f2);
+        }
+        struct hash_proc {
+            typedef multifunc data;
+            unsigned operator()(const multifunc &f) const {
+                return combine_hash(f.func->hash(), hash_u(f.count));
+            }
+        };
+        struct eq_proc { bool operator()(multifunc const& f1, multifunc const& f2) const { return f1 == f2; } };
+    };
+    typedef vector<multifunc> func_decl_multivector;
+    typedef vector_hash<multifunc::hash_proc> func_decl_multivector_hash;
+    typedef default_eq<func_decl_multivector> func_decl_multivector_eq;
 }
 
 #endif
