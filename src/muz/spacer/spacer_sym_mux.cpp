@@ -59,7 +59,6 @@ void sym_mux::register_decl(func_decl *fdecl) {
 }
 
 void sym_mux::ensure_capacity(sym_mux_entry &entry, unsigned sz, unsigned versions_sz) const {
-    SASSERT(entry.m_versions_of_variants.empty());
     while (entry.m_variants.size() < sz) {
         unsigned idx = entry.m_variants.size();
         entry.m_variants.push_back (mk_variant(entry.m_main, idx));
@@ -79,8 +78,8 @@ void sym_mux::clone_variants(sym_mux::sym_mux_entry &entry, unsigned sz) const
         unsigned idx = entry.m_versions_of_variants.size();
         func_decl_ref_vector variants(m);
         for (unsigned i = 0; i < entry.m_variants.size(); ++i) {
-            variants.push_back(mk_variant(entry.m_variants.get(i), idx));
-            m_muxes.insert(variants.back(), std::make_tuple(&entry, i + 1, idx));
+            variants.push_back(mk_variant(entry.m_variants.get(i), idx + 1));
+            m_muxes.insert(variants.back(), {&entry, i, idx + 1});
         }
         entry.m_versions_of_variants.push_back(variants);
     }
@@ -122,25 +121,11 @@ func_decl * sym_mux::shift_decl(func_decl * decl, unsigned src_idx,
         ensure_capacity(*std::get<0>(entry), tgt_idx + 1, version + 1);
         return version == 0
                 ? std::get<0>(entry)->m_variants.get(tgt_idx)
-                : std::get<0>(entry)->m_versions_of_variants[version].get(tgt_idx);
+                : std::get<0>(entry)->m_versions_of_variants[version - 1].get(tgt_idx);
     }
     UNREACHABLE();
     return nullptr;
 }
-
-//func_decl * sym_mux::shift_decl(func_decl * decl, unsigned src_idx, unsigned src_version,
-//                                unsigned tgt_idx, unsigned tgt_version) const {
-//    std::tuple<sym_mux_entry*,unsigned,unsigned> entry;
-//    if (m_muxes.find(decl, entry)) {
-//        SASSERT(std::get<1>(entry) == src_idx && std::get<2>(entry) == src_version);
-//        ensure_capacity(*std::get<0>(entry), tgt_idx + 1, tgt_version + 1);
-//        return tgt_version == 0
-//                ? std::get<0>(entry)->m_variants.get(tgt_idx)
-//                : std::get<0>(entry)->m_versions_of_variants[tgt_version].get(tgt_idx);
-//    }
-//    UNREACHABLE();
-//    return nullptr;
-//}
 
 func_decl *sym_mux::shift_decl(func_decl *sym, unsigned src_idx,
                                const sym_mux::idx_subst &tgt_idcs) const
@@ -156,7 +141,7 @@ func_decl *sym_mux::shift_decl(func_decl *sym, unsigned src_idx,
         ensure_capacity(*std::get<0>(entry), tgt_idx + 1, tgt_version + 1);
         return tgt_version == 0
                 ? std::get<0>(entry)->m_variants.get(tgt_idx)
-                : std::get<0>(entry)->m_versions_of_variants[tgt_version].get(tgt_idx);
+                : std::get<0>(entry)->m_versions_of_variants[tgt_version - 1].get(tgt_idx);
     }
     UNREACHABLE();
     return nullptr;
@@ -174,7 +159,7 @@ func_decl * sym_mux::shift_version(func_decl * decl, unsigned src_version,
         ensure_capacity(*std::get<0>(entry), idx + 1, tgt_version + 1);
         return tgt_version == 0
                 ? std::get<0>(entry)->m_variants.get(idx)
-                : std::get<0>(entry)->m_versions_of_variants[tgt_version].get(idx);
+                : std::get<0>(entry)->m_versions_of_variants[tgt_version - 1].get(idx);
     }
     UNREACHABLE();
     return nullptr;
@@ -220,7 +205,7 @@ private:
     ast_manager & m;
     const sym_mux & m_parent;
     bool m_subst_version;
-    const sym_mux::idx_subst *m_from_subst;
+    const sym_mux::source_subst *m_from_subst;
     const sym_mux::idx_subst *m_to_subst;
     unsigned m_from_idx;
     unsigned m_to_idx;
@@ -242,7 +227,7 @@ public:
           m_to_version(0),
           m_homogenous(homogenous), m_pinned(m) {(void) m_homogenous;}
 
-    conv_rewriter_cfg(const sym_mux & parent, const sym_mux::idx_subst &from_idcs,
+    conv_rewriter_cfg(const sym_mux & parent, const sym_mux::source_subst &from_idcs,
                       unsigned to_idx, bool homogenous)
         : m(parent.get_manager()),
           m_parent(parent),
@@ -288,25 +273,24 @@ public:
         func_decl * tgt = nullptr;
         unsigned version = 0;
         func_decl * associated = nullptr;
+        unsigned from_idx = 0;
+        if (!m_parent.find_idx(sym, from_idx, version, associated)) {
+            SASSERT(!m_parent.is_muxed(sym));
+            return false;
+        }
+
         if (m_subst_version) {
+            SASSERT(version == m_from_version);
             tgt = m_parent.shift_version(sym, m_from_version, m_to_version);
         } else {
-            unsigned from_idx = 0;
-            if (!m_parent.find_idx(sym, from_idx, version, associated)) {
-                SASSERT(!m_parent.is_muxed(sym));
-                return false;
-            }
-
             SASSERT((!m_from_subst && !m_to_subst) || associated);
-            unsigned expected_from_idx = m_from_subst
-                    ? m_from_subst->find({associated, version}).first
-                    : m_from_idx;
-            if (from_idx != expected_from_idx) {
-                SASSERT(!m_homogenous);
-                return false;
-            }
             unsigned tgt_idx = m_to_idx;
             unsigned tgt_version = version;
+            if ((!m_from_subst && from_idx != m_from_idx) ||
+                (m_from_subst && !m_from_subst->find({associated, version, from_idx}, tgt_version))) {
+                    SASSERT(!m_homogenous);
+                    return false;
+            }
             if (m_to_subst) {
                 auto &tgt = m_to_subst->find({associated, version});
                 tgt_idx = tgt.first;
@@ -333,7 +317,7 @@ void sym_mux::shift_expr(expr * f, unsigned src_idx, unsigned tgt_idx,
     }
 }
 
-void sym_mux::shift_expr(expr * f, const idx_subst & src_idcs, unsigned tgt_idx,
+void sym_mux::shift_expr(expr * f, const source_subst & src_idcs, unsigned tgt_idx,
                          expr_ref & res, bool homogenous) const {
     conv_rewriter_cfg r_cfg(*this, src_idcs, tgt_idx, homogenous);
     rewriter_tpl<conv_rewriter_cfg> rwr(m, false, r_cfg);

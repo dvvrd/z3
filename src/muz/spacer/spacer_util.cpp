@@ -935,6 +935,43 @@ namespace {
         for_each_expr(cd, fml);
     }
 
+    comparison_result compare_func_multivectors(const func_decl_multivector &v1, const func_decl_multivector &v2)
+    {
+        if (v1.size() == v2.size()) {
+            comparison_result result = comparison_result::equal;
+            for (unsigned i = 0; i < v1.size(); ++i) {
+                auto &cfunc1 = v1[i];
+                auto &cfunc2 = v2[i];
+                if (cfunc1.func != cfunc2.func) {return comparison_result::incomparable;}
+                if (cfunc1.count < cfunc2.count) {
+                    if (result == comparison_result::gt) {return comparison_result::incomparable;}
+                    result = comparison_result::lt;
+                }
+                if (cfunc1.count > cfunc2.count) {
+                    if (result == comparison_result::lt) {return comparison_result::incomparable;}
+                    result = comparison_result::gt;
+                }
+            }
+            return result;
+        }
+
+        const func_decl_multivector &small = v1.size() < v2.size() ? v1 : v2;
+        const func_decl_multivector &large = v1.size() < v2.size() ? v2 : v1;
+        unsigned i = 0, sz = small.size();
+        for (unsigned j = 0; i < sz && j < large.size() - sz + i + 1; ++j) {
+            if (small[i].func == large[j].func) {
+                if (small[i].count > large[j].count) {break;}
+                ++i;
+            }
+        }
+        return i < sz
+                ? comparison_result::incomparable
+                : (small.size() == large.size()
+                    ? comparison_result::equal
+                    : (v1.size() < v2.size()
+                        ? comparison_result::lt
+                        : comparison_result::gt));
+    }
 }
 
 template class rewriter_tpl<spacer::adhoc_rewriter_cfg>;

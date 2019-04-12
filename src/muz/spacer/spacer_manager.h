@@ -85,6 +85,7 @@ class manager {
 
 public:
     typedef sym_mux::idx_subst idx_subst;
+    typedef sym_mux::source_subst source_subst;
 
     manager(ast_manager & manager);
 
@@ -133,8 +134,12 @@ public:
                      unsigned o_idx, unsigned tgt_version) const
     {subst.insert({p, src_version}, {o_index(o_idx), tgt_version});}
 
+    void add_source_subst(source_subst &subst, func_decl *p, unsigned src_version,
+                     unsigned o_idx, unsigned tgt_version) const
+    {subst.insert({p, src_version, o_index(o_idx)}, tgt_version);}
 
-    void formula_o2n(expr * f, expr_ref & result, const idx_subst &o_idcs,
+
+    void formula_o2n(expr * f, expr_ref & result, const source_subst &o_idcs,
                      bool homogenous = true) const
     {m_mux.shift_expr(f, o_idcs, n_index(), result, homogenous);}
 

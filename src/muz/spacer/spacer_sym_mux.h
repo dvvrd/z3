@@ -55,6 +55,8 @@ private:
 
 public:
     typedef versioned_func_map<std::pair<unsigned, unsigned>> idx_subst;
+    typedef triple<func_decl*,unsigned,unsigned> version_idx_key;
+    typedef map<version_idx_key, unsigned, triple_hash<ptr_hash<func_decl>, unsigned_hash, unsigned_hash>, default_eq<version_idx_key>> source_subst;
 
     sym_mux(ast_manager & m);
     ~sym_mux();
@@ -123,7 +125,7 @@ public:
       tgt_idx, where A is associated with sym.
       If homogenous is true, formula cannot contain symbols of other variants.
     */
-    void shift_expr(expr * f, const idx_subst & src_idcs, unsigned tgt_idx,
+    void shift_expr(expr * f, const source_subst & src_idcs, unsigned tgt_idx,
                              expr_ref & res, bool homogenous) const;
 
     /**

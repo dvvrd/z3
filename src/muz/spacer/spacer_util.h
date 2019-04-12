@@ -28,6 +28,7 @@ Revision History:
 #include "util/ref_vector.h"
 #include "util/trace.h"
 #include "util/vector.h"
+#include "util/poset.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/array_decl_plugin.h"
 #include "ast/bv_decl_plugin.h"
@@ -181,6 +182,8 @@ namespace spacer {
     typedef vector<multifunc> func_decl_multivector;
     typedef vector_hash<multifunc::hash_proc> func_decl_multivector_hash;
     typedef default_eq<func_decl_multivector> func_decl_multivector_eq;
+
+    comparison_result compare_func_multivectors(const func_decl_multivector &v1, const func_decl_multivector &v2);
 }
 
 #endif

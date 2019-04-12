@@ -200,7 +200,7 @@ struct triple_hash : private Hash1 {
         m_hash3(h3) {
     }
 
-    unsigned operator()(std::pair<typename Hash1::data, typename Hash2::data> const & p) const {
+    unsigned operator()(data const & p) const {
         return combine_hash(combine_hash(Hash1::operator()(p.first), m_hash2.operator()(p.second)), m_hash3.operator()(p.third));
     }
 };

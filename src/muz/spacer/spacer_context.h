@@ -388,7 +388,7 @@ class pred_transformer {
             p->set_tag(tag);
             m_tags.insert(tag, p);
         }
-        const app_ref_vector &mk_app_tags(ast_manager &m, pt_rule &v);
+        const app_ref_vector &mk_app_tags(manager &pm, pt_rule &v);
 
         bool empty() {return m_rules.empty();}
         iterator begin() const {return m_rules.begin();}
@@ -442,7 +442,7 @@ class pred_transformer {
                   m_used_rules(used_rules),
                   m_subst(subst),
                   m_app_tags(app_tags),
-                  m_pointers(count),
+                  m_pointers(count, static_cast<unsigned>(0)),
                   m_app_tags_base(m_app_tags.size()),
                   m_initialized(false)
             {
@@ -596,7 +596,7 @@ public:
     /// all determines whether initial reachability facts are included as well
     reach_fact *get_used_rf(model& mdl, unsigned version, bool all = true);
     /// \brief Returns reachability fact active in the origin of the given model
-    reach_fact* get_used_origin_rf(model &mdl, unsigned oidx);
+    reach_fact* get_used_origin_rf(model &mdl, unsigned oidx, unsigned version);
     /// \brief Returns reachability fact active in the origin of the given model
     reach_fact* get_used_origin_rf(model &mdl, const manager::idx_subst &oidcs);
     expr_ref get_origin_summary(model &mdl,
@@ -617,6 +617,8 @@ public:
         return m_pt_rules.find_by_rule(r, p) ? p->trans() : nullptr;
     }
     void get_transitions(versioned_rule_vector const& rules, expr_ref_vector &transitions);
+    void get_initials(versioned_rule_vector const& rules, model &mdl,
+                      expr_ref_vector &transitions);
     ptr_vector<app>& get_aux_vars(datalog::rule const& r) {
         SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
         pt_rule *p = nullptr;
@@ -635,7 +637,7 @@ public:
 
     /// initialize reachability facts using initial rules
     void init_rfs ();
-    reach_fact *mk_rf(pob &n, model &mdl, const datalog::rule &r);
+    reach_fact *mk_rf(pob &n, model &mdl, const datalog::rule &r, unsigned version);
     void add_rf (reach_fact *fact);  // add reachability fact
     reach_fact* get_last_rf () const { return m_reach_facts.back (); }
     expr* get_last_rf_tag () const;
@@ -859,7 +861,7 @@ class derivation {
     class premise {
         pred_transformer &m_pt;
         /// origin orders in the rule
-        manager::idx_subst m_oidcs;
+        manager::source_subst m_oidcs;
         /// summary fact corresponding to the premise
         expr_ref m_summary;
         ///  whether this is a must or may premise
@@ -869,19 +871,20 @@ class derivation {
     public:
         premise (pred_transformer &pt, func_decl *decl, unsigned oidx, unsigned version,
                  expr *summary, const ptr_vector<app> *aux_vars = nullptr);
-        premise (pred_transformer &pt, const manager::idx_subst &oidcs, expr *summary);
+        premise (pred_transformer &pt, const manager::source_subst &subst,
+                 const manager::idx_subst &oidcs, expr *summary);
         premise (const premise &p);
 
         bool is_must() {return m_must;}
         expr * get_summary() {return m_summary.get ();}
         const app_ref_vector &get_ovars() {return m_ovars;}
-        const manager::idx_subst &get_oidcs() {return m_oidcs;}
+        const manager::source_subst &get_oidcs() {return m_oidcs;}
         pred_transformer &pt() {return m_pt;}
 
         /// \brief Updated the summary.
         /// The new summary is over n-variables.
-        void set_summary(expr * summary, bool must,
-                         const ptr_vector<app> *aux_vars = nullptr);
+//        void set_summary(expr * summary, bool must,
+//                         const ptr_vector<app> *aux_vars = nullptr);
     };
 
 
@@ -907,8 +910,8 @@ public:
                                    func_decl *decl, unsigned oidx,
                                    unsigned version, expr * summary,
                                    const ptr_vector<app> *aux_vars = nullptr);
-    void add_summary_premise (pred_transformer &pt, const manager::idx_subst &subst,
-                              expr *summary);
+    void add_summary_premise (pred_transformer &pt, const manager::source_subst &subst,
+                              const manager::idx_subst &oidcs, expr *summary);
 
     /// creates the first child. Must be called after all the premises
     /// are added. The model must be valid for the premises
