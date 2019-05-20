@@ -20,6 +20,9 @@ Notes:
 
 --*/
 
+#define ENABLE_ASSERTS false
+#define LOG_STREAM std::cout
+//#define LOG_STREAM tout
 
 #include <sstream>
 #include <iomanip>
@@ -91,7 +94,7 @@ void pob::set_post(expr* post, app_ref_vector const &binding) {
 }
 
 void pob::inherit(pob const &p) {
-    std::cout << "POB::INHERIT " << this->pt().name() << " lvl " << this->level() << " from lvl " << p.level() << "\n";
+    LOG_STREAM << "POB::INHERIT " << this->pt().name() << " lvl " << this->level() << " from lvl " << p.level() << "\n";
     SASSERT(!is_in_queue());
     SASSERT(m_parent == p.m_parent);
     SASSERT(&m_pt == &p.m_pt);
@@ -265,7 +268,7 @@ pob *derivation::create_next_child(model &mdl)
     timeit _timer (is_trace_enabled("spacer_timeit"),
                    "spacer::derivation::create_next_child",
                    verbose_stream ());
-    std::cout << "create_next_child...\n";
+    LOG_STREAM << "create_next_child...\n";
 
     ast_manager &m = get_ast_manager ();
     expr_ref_vector summaries (m);
@@ -279,8 +282,8 @@ pob *derivation::create_next_child(model &mdl)
         vars.append (m_premises[m_active].get_ovars ());
         ++m_active;
     }
-    if (m_active >= m_premises.size()) { std::cout << "  the end!\n";return nullptr; }
-    std::cout << "   " << m_premises[m_active].pt().name() << " (m_active = " << m_active << ")" << "\n";
+    if (m_active >= m_premises.size()) { LOG_STREAM << "  the end!\n";return nullptr; }
+    LOG_STREAM << "   " << m_premises[m_active].pt().name() << " (m_active = " << m_active << ")" << "\n";
 
     // -- update m_trans with the pre-image of m_trans over the must summaries
     summaries.push_back (m_trans);
@@ -289,8 +292,8 @@ pob *derivation::create_next_child(model &mdl)
     m_trans = mk_and (summaries);
     summaries.reset ();
 
-    std::cout << "create_next_child(mdl): m_trans before MBP: " << mk_pp(m_trans, m) << "\n";
-    std::cout << "create_next_child(mdl): vars before MBP: " << vars << std::endl;
+    LOG_STREAM << "create_next_child(mdl): m_trans before MBP: " << mk_pp(m_trans, m) << "\n";
+    LOG_STREAM << "create_next_child(mdl): vars before MBP: " << vars << std::endl;
 
     if (!vars.empty()) {
         timeit _timer1 (is_trace_enabled("spacer_timeit"),
@@ -307,7 +310,7 @@ pob *derivation::create_next_child(model &mdl)
     }
     STRACE("spacer",
            tout << "[dvvrd] m_trans after MBP: " << mk_pp(m_trans, m) << "\n";);
-    std::cout << "[dvvrd] m_trans after MBP: " << mk_pp(m_trans, m) << "\n";
+    LOG_STREAM << "[dvvrd] m_trans after MBP: " << mk_pp(m_trans, m) << "\n";
 
 //    if (!mdl.is_true(m_premises[m_active].get_summary())) {
 //        IF_VERBOSE(1, verbose_stream() << "Summary unexpectendly not true\n";);
@@ -321,12 +324,12 @@ pob *derivation::create_next_child(model &mdl)
 //        STRACE("spacer",
 //               tout << "[dvvrd] Adding summary into POST (m_premises): " << "[" << m_premises [i].pt().name() << "]; " << mk_pp(m_premises [i].get_summary (), m) << "; vars: " << m_premises[i].get_ovars() << "\n";);
         summaries.push_back (m_premises [i].get_summary ());
-        std::cout << i  << ": pushing premise " << mk_pp(m_premises[i].get_summary(), m) << " of " << m_premises[i].pt().name() << "\n";
+        LOG_STREAM << i  << ": pushing premise " << mk_pp(m_premises[i].get_summary(), m) << " of " << m_premises[i].pt().name() << "\n";
         vars.append (m_premises [i].get_ovars ());
     }
     summaries.push_back (m_trans);
-    std::cout << "summaries before mbp: " << summaries << "\n";
-    std::cout << "vars: " << vars << "\n";
+    LOG_STREAM << "summaries before mbp: " << summaries << "\n";
+    LOG_STREAM << "vars: " << vars << "\n";
     expr_ref post(m);
     post = mk_and(summaries);
     summaries.reset ();
@@ -359,16 +362,16 @@ pob *derivation::create_next_child(model &mdl)
     }
     STRACE("spacer",
            tout << "[dvvrd] POST after skolemization: " << mk_pp(post, m) << "\n";);
-    std::cout << "[dvvrd] POST after skolemization: " << mk_pp(post, m) << "\n";
+    LOG_STREAM << "[dvvrd] POST after skolemization: " << mk_pp(post, m) << "\n";
 
     const manager::source_subst &oidcs = m_premises [m_active].get_oidcs();
-    std::cout << m_parent.pt().name() << ": RENAMING (" << vars << ") "
+    LOG_STREAM << m_parent.pt().name() << ": RENAMING (" << vars << ") "
             << " " << mk_pp(post.get(), m) << "; Idcs:" << std::endl;
     for (auto &p : oidcs) {
-        std::cout << "{" << p.m_key.first->get_name() << ", " << p.m_key.second << ", " << p.m_key.third << "} |-> " << p.m_value << std::endl;
+        LOG_STREAM << "{" << p.m_key.first->get_name() << ", " << p.m_key.second << ", " << p.m_key.third << "} |-> " << p.m_value << std::endl;
     }
     get_manager ().formula_o2n (post.get (), post, oidcs, vars.empty() && oidcs.size() == 1);
-    std::cout << m_parent.pt().name() << ": RENAMED (" << vars << ") "
+    LOG_STREAM << m_parent.pt().name() << ": RENAMED (" << vars << ") "
             << "INTO " << mk_pp(post.get(), m) << std::endl;
 
 
@@ -390,7 +393,7 @@ pob *derivation::create_next_child(model &mdl)
 pob *derivation::create_next_child ()
 {
     if (m_active + 1 >= m_premises.size()) { return nullptr; }
-    std::cout << "parameterless create_next_child (" << m_premises[m_active].pt().name() << ")\n";
+    LOG_STREAM << "parameterless create_next_child (" << m_premises[m_active].pt().name() << ")\n";
 
     // update the summary of the active node to some must summary
 
@@ -404,7 +407,7 @@ pob *derivation::create_next_child ()
 
     for (unsigned i = m_active + 1; i < m_premises.size (); ++i)
     { summaries.push_back(m_premises [i].get_summary()); }
-//    std::cout << "summaries before adding trans: " << summaries << "\n";
+//    LOG_STREAM << "summaries before adding trans: " << summaries << "\n";
 
     // -- orient transition relation towards m_active premise
     expr_ref active_trans (m_trans, m);
@@ -415,10 +418,10 @@ pob *derivation::create_next_child ()
     // if not true, bail out, the must summary of m_active is not strong enough
     // this is possible if m_post was weakened for some reason
     model_ref mdl;
-//    std::cout << this->pt().name() <<" create_next_child: before\n";
+//    LOG_STREAM << this->pt().name() <<" create_next_child: before\n";
     if (!pt.is_must_reachable(mk_and(summaries), &mdl)) { return nullptr; }
 
-//    std::cout << this->pt().name() <<" create_next_child: after\n";
+//    LOG_STREAM << this->pt().name() <<" create_next_child: after\n";
     mdl->set_model_completion(false);
 
     // get an implicant of the summary
@@ -473,17 +476,17 @@ pob *derivation::create_next_child ()
         if (!vars.empty ()) {
             vars.append(m_evars);
             m_evars.reset();
-            std::cout << "trans before mbp (vars " << vars << "): " << mk_pp(m_trans, m) << "\n";
+            LOG_STREAM << "trans before mbp (vars " << vars << "): " << mk_pp(m_trans, m) << "\n";
             this->pt().mbp(vars, m_trans, *mdl,
                            true, this->pt().get_context().use_ground_pob());
-            std::cout << "trans after mbp (vars " << vars << "): " << mk_pp(m_trans, m) << "\n";
+            LOG_STREAM << "trans after mbp (vars " << vars << "): " << mk_pp(m_trans, m) << "\n";
             // keep track of implicitly quantified variables
             CTRACE("spacer", !vars.empty(),
                    tout << "Failed to eliminate: " << vars << "\n";);
             m_evars.append (vars);
             vars.reset();
         }
-        std::cout << this->pt().name() <<"create_next_child: m_trans: " << mk_pp(m_trans, m) << "\n";
+        LOG_STREAM << this->pt().name() <<"create_next_child: m_trans: " << mk_pp(m_trans, m) << "\n";
     }
 
     m_active++;
@@ -954,7 +957,7 @@ void pred_transformer::occurrence_cache::mk_assumptions(const func_decl_multivec
     rules_cache used_rules;
     manager::idx_subst subst;
     app_ref_vector app_tags(pm.get_manager());
-    std::cout << "mk_assumptions " << mk_pp(fml, pm.get_manager()) << std::endl;
+    LOG_STREAM << "mk_assumptions " << mk_pp(fml, pm.get_manager()) << std::endl;
     mk_assumptions_rec(heads, 0, used_rules, subst, app_tags, fml, result);
 }
 
@@ -974,7 +977,7 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl_multivec
     m_extend_lit0(m), m_extend_lit(m),
     m_all_init(false)
 {
-    std::cout << m_name << "'s reach_solver: " << (long)(m_reach_solver.get()) << "\n";
+    LOG_STREAM << m_name << "'s reach_solver: " << (long)(m_reach_solver.get()) << std::endl;
     m_solver = alloc(prop_solver, m, ctx.mk_solver0(), ctx.mk_solver1(),
                      ctx.get_params(), m_name);
     init_sig();
@@ -992,7 +995,7 @@ symbol pred_transformer::mk_name() const
     for (unsigned i = 0; i < m_heads.size(); ++i) {
         if (i > 0) {buffer << "|><|";}
         buffer << m_heads[i].func->get_name();
-        unsigned count = m_heads[0].count;
+        unsigned count = m_heads[i].count;
         if (count > 1) {
             buffer << "^" << count;
         }
@@ -1100,13 +1103,13 @@ void pred_transformer::ensure_level(unsigned level)
 // MAKES QUERY
 bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
 {
-    std::cout << m_name << ": is_must_reachable " << mk_pp(state, m) << "\n";
+    LOG_STREAM << m_name << ": is_must_reachable " << mk_pp(state, m) << "\n";
     scoped_watch _t_(m_must_reachable_watch);
     SASSERT (state);
     solver::scoped_push _sp_(*m_reach_solver);
 
     bool all_reach_facts_empty = true;
-    std::cout << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(state, m) << std::endl;
+    LOG_STREAM << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(state, m) << std::endl;
     m_reach_solver->assert_expr (state);
     for (auto &cfunc : heads()) {
         pred_transformer &pt = ctx.get_pred_transformer(cfunc.func);
@@ -1115,7 +1118,7 @@ bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
                 all_reach_facts_empty = false;
                 expr_ref tag(pt.m_reach_facts.back()->tag(), m);
                 pm.formula_v2v(tag, tag, 0, version);
-                std::cout << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(m.mk_not(tag), m) << std::endl;
+                LOG_STREAM << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(m.mk_not(tag), m) << std::endl;
                 m_reach_solver->assert_expr (m.mk_not(tag));
             }
         }
@@ -1239,7 +1242,7 @@ void pred_transformer::find_rules(model &model,
                         bool used = false;
                         func_decl* d = r->get_tail(i)->get_decl();
                         const pred_transformer &pt = ctx.get_pred_transformer(d);
-                        if (!pt.has_rfs()) {is_concrete = false;}
+                        if (!pt.has_rfs()) {intersects_with_all_rfs = false;}
                         else {
                             expr_ref v(m);
                             pm.formula_n2o(pt.get_last_rf_tag (), v, i);
@@ -1247,9 +1250,9 @@ void pred_transformer::find_rules(model &model,
                             model.eval(to_app (v.get ())->get_decl (), vl);
                             used = m.is_false (vl);
                             if (!used) {
-                                std::cout << "app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED\n";
+                                LOG_STREAM << "app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED" << std::endl;
                             } else {
-                                std::cout << version << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED\n";
+                                LOG_STREAM << version << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED" << std::endl;
                             }
                             intersects_with_all_rfs &= used;
                         }
@@ -1399,14 +1402,14 @@ void pred_transformer::add_lemma_core(lemma* lemma, bool ground_only)
         if (is_infty_level(lvl)) {
             m_solver->assert_expr(l);
             for (pred_transformer *pt : subsumers()) {
-                std::cout << "feeding inifinite-level lemma to " << pt->name() << "\n";
+                LOG_STREAM << "feeding inifinite-level lemma to " << pt->name() << "\n";
                 pt->m_solver->assert_expr(l);
             }
         } else {
             ensure_level (lvl);
             m_solver->assert_expr (l, lvl);
             for (pred_transformer *pt : subsumers()) {
-                std::cout << "feeding level " << lvl << " lemma to " << pt->name() << "\n";
+                LOG_STREAM << "feeding level " << lvl << " lemma to " << pt->name() << "\n";
                 //TODOOODOODOODDOODODODODDODOODOD: implement generic multiplexing a-la mk_assumptions
                 if (heads().size() == 1 && heads()[0].count == 1 && pt->heads().size() == 1) {
                     pt->ensure_level (lvl);
@@ -1499,7 +1502,7 @@ void pred_transformer::add_rf (reach_fact *rf)
                    "spacer::pred_transformer::add_rf",
                    verbose_stream ());
 
-    std::cout << "[" << m_name << "] add_rf: " << rf->get_rule().get_head()->get_name() << " "
+    LOG_STREAM << "[" << m_name << "] add_rf: " << rf->get_rule().get_head()->get_name() << " "
            << (rf->is_init () ? "INIT " : "")
            << mk_pp(rf->get (), m) << std::endl;
 
@@ -1528,14 +1531,14 @@ void pred_transformer::add_rf (reach_fact *rf)
         new_tag = to_app(extend_initial(rf->get())->get_arg(0));
     rf->set_tag(new_tag);
 
-    std::cout << m_name << ": adding " << mk_pp(rf->tag(), m) << "to reach facts" << std::endl;
+    LOG_STREAM << m_name << ": adding " << mk_pp(rf->tag(), m) << "to reach facts" << std::endl;
     // add to m_reach_facts
     m_reach_facts.push_back (rf);
 
     // update m_reach_solver
     if (last_tag) {fml = m.mk_or(m.mk_not(last_tag), rf->get(), rf->tag());}
     else {fml = m.mk_or(rf->get(), rf->tag());}
-    std::cout << m_name << "::m_reach_solver: assert " << mk_pp(fml, m) << std::endl;
+    LOG_STREAM << m_name << "::m_reach_solver: assert " << mk_pp(fml, m) << std::endl;
     m_reach_solver->assert_expr (fml);
     for (pred_transformer *pt : subsumers()) {
         for (auto &p : pt->heads()) {
@@ -1543,7 +1546,7 @@ void pred_transformer::add_rf (reach_fact *rf)
                 for (unsigned version = 0; version < p.count; ++version) {
                     expr_ref renamed(m);
                     pm.formula_v2v(fml, renamed, 0, version);
-                    std::cout << pt->name() << "::m_reach_solver: assert " << mk_pp(renamed, m) << std::endl;
+                    LOG_STREAM << pt->name() << "::m_reach_solver: assert " << mk_pp(renamed, m) << std::endl;
                     pt->m_reach_solver->assert_expr(renamed);
                 }
                 break;
@@ -1666,13 +1669,13 @@ expr_ref pred_transformer::get_origin_summary (model &mdl,
     expr_ref v(m);
 
     if (!must) { // use may summary
-        std::cout << "get_origin_summary " << level << ": adding " << mk_pp(get_formulas(level), m) << "\n";
+        LOG_STREAM << "get_origin_summary " << level << ": adding " << mk_pp(get_formulas(level), m) << "\n";
         summary.push_back (get_formulas(level));
         // -- no auxiliary variables in lemmas
         *aux = nullptr;
     } else { // find must summary to use
         SASSERT(oidcs.size() == 1);
-        std::cout << "get_origin_summary (must lvl" << level << "): adding " << mk_pp(get_used_origin_rf(mdl, oidcs)->get(), m) << "\n";
+        LOG_STREAM << "get_origin_summary (must lvl" << level << "): adding " << mk_pp(get_used_origin_rf(mdl, oidcs)->get(), m) << "\n";
         reach_fact *f = get_used_origin_rf(mdl, oidcs);
         summary.push_back (f->get ());
         *aux = &f->aux_vars ();
@@ -1685,7 +1688,7 @@ expr_ref pred_transformer::get_origin_summary (model &mdl,
         pm.formula_n2o (summary.get (i), v, oidcs);
         summary[i] = v;
     }
-    std::cout << "get_origin_summary " << level << ": after renaming " << summary << "\n";
+    LOG_STREAM << "get_origin_summary " << level << ": after renaming " << summary << "\n";
 
     // bail out of if the model is insufficient
     // (skip quantified lemmas cause we can't validate them in the model)
@@ -1693,7 +1696,7 @@ expr_ref pred_transformer::get_origin_summary (model &mdl,
     flatten_and(summary);
     for (auto *s : summary) {
         if (!is_quantifier(s) && !mdl.is_true(s)) {
-            std::cout << "Summary not true in the model: "
+            LOG_STREAM << "Summary not true in the model: "
                   << mk_pp(s, m) << "\n";
             TRACE("spacer", tout << "Summary not true in the model: "
                   << mk_pp(s, m) << "\n";);
@@ -1701,11 +1704,11 @@ expr_ref pred_transformer::get_origin_summary (model &mdl,
         }
     }
 
-    std::cout << "get_origin_summary " << level << ": before picking" << summary << "\n";
+    LOG_STREAM << "get_origin_summary " << level << ": before picking" << summary << "\n";
     // -- pick an implicant
     expr_ref_vector lits(m);
     compute_implicant_literals (mdl, summary, lits);
-    std::cout << "get_origin_summary " << level << ": after picking" << lits << "\n";
+    LOG_STREAM << "get_origin_summary " << level << ": after picking" << lits << "\n";
     return mk_and(lits);
 }
 
@@ -1789,7 +1792,7 @@ void pred_transformer::get_ext_lits(expr_ref_vector &out) const {
 // MAKES QUERY
 bool pred_transformer::is_blocked (pob &n, unsigned &uses_level)
 {
-    std::cout << "pred_transformer::is_blocked\n";
+    LOG_STREAM << "pred_transformer::is_blocked\n";
     ensure_level (n.level ());
     prop_solver::scoped_level _sl (*m_solver, n.level ());
     m_solver->set_core (nullptr);
@@ -1871,10 +1874,10 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                                      vector<bool>& reach_pred_used,
                                      unsigned& num_reuse_reach)
 {
-    std::cout << "==================================================\n";
-    std::cout << "is-reachable: " << m_name << " level: "
+    LOG_STREAM << "==================================================\n";
+    LOG_STREAM << "is-reachable: " << m_name << " level: "
           << n.level() << " depth: " << n.depth () << "\n";
-          std::cout << mk_pp(n.post(), m) << "\n";
+          LOG_STREAM << mk_pp(n.post(), m) << "\n";
     TRACE("spacer",
           tout << "is-reachable: " << m_name << " level: "
           << n.level() << " depth: " << n.depth () << "\n";
@@ -1882,7 +1885,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     timeit _timer (is_trace_enabled("spacer_timeit"),
                    "spacer::pred_transformer::is_reachable",
                    verbose_stream ());
-    std::cout << "pob: " << (long)&n << std::endl;
+    LOG_STREAM << "pob: " << (long)&n << std::endl;
 
     ensure_level(n.level());
 
@@ -1916,13 +1919,13 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                     const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
                     for (unsigned version = 0; version < cfunc.count; ++version) {
                         if (pt.has_rfs()) {
-                            std::cout << pt.name() << " has rfs" << std::endl;
+                            LOG_STREAM << pt.name() << " has rfs" << std::endl;
                             expr_ref a(m);
                             pm.formula_n2o(pt.get_last_rf_tag(), a, i);
                             pm.formula_v2v(a, a, 0, version);
                             reach_assumps.push_back(m.mk_not (a));
                         } else {
-                            std::cout << pt.name() << " doesn't have rfs" << std::endl;
+                            LOG_STREAM << pt.name() << " doesn't have rfs" << std::endl;
                             expr_ref tag(m);
                             pm.formula_v2v(kv.m_value->tag(), tag, 0, version);
                             reach_assumps.push_back(m.mk_not (tag));
@@ -1949,12 +1952,12 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     expr_ref_vector bg(m);
     get_ext_lits(bg);
 
-    std::cout << "reach assumps: " << reach_assumps << std::endl;
-    std::cout << "bg: " << bg << std::endl;
+    LOG_STREAM << "reach assumps: " << reach_assumps << std::endl;
+    LOG_STREAM << "bg: " << bg << std::endl;
     lbool is_sat = m_solver->check_assumptions(post, reach_assumps,
                                                m_transition_clauses,
                                                bg.size(), bg.c_ptr(), 0);
-    std::cout << is_sat << "\n";
+    LOG_STREAM << is_sat << "\n";
 
     TRACE ("spacer",
            if (!reach_assumps.empty ()) {
@@ -1969,18 +1972,18 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
         if (core) { core->reset(); }
         if (model && model->get()) {
             find_rules(**model, is_concrete, reach_pred_used, num_reuse_reach, rules);
-            std::cout << "------------------------------------------\n";
-            std::cout << "reachable "
+            LOG_STREAM << "------------------------------------------\n";
+            LOG_STREAM << "reachable "
                    << "rules cout: " << rules.size() << "; "
                    << "is_concrete [ ";
                    for (bool concr : is_concrete)
-                       std::cout << concr << " ";
-                   std::cout << "] rused: ";
+                       LOG_STREAM << concr << " ";
+                   LOG_STREAM << "] rused: ";
                    for (unsigned i = 0, sz = reach_pred_used.size (); i < sz; ++i)
-                       std::cout << reach_pred_used [i];
-                   std::cout << "\n";
-            std::cout << "model: ";
-            model_smt2_pp(std::cout, m, **model, 0);
+                       LOG_STREAM << reach_pred_used [i];
+                   LOG_STREAM << "\n";
+            LOG_STREAM << "model: ";
+            model_smt2_pp(LOG_STREAM, m, **model, 0);
 
             TRACE ("spacer", tout << "reachable "
                    << "is_concrete [ ";
@@ -2005,9 +2008,9 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                }
             );
                if (core) {
-                   std::cout << "Core:\n";
+                   LOG_STREAM << "Core:\n";
                    for (unsigned i = 0; i < core->size (); i++) {
-                       std::cout << mk_pp (core->get(i), m) << "\n";
+                       LOG_STREAM << mk_pp (core->get(i), m) << "\n";
                    }
                }
         uses_level = m_solver->uses_level();
@@ -2061,7 +2064,7 @@ bool pred_transformer::is_ctp_blocked(lemma *lem) {
 //    pm.formula_n2o(lemmas.get(), lemmas, 0);
 //    if (ctp->is_false(lemmas)) return false;
 
-    std::cout << "BLOCKED!\n";
+    LOG_STREAM << "BLOCKED!\n";
     // lem is blocked by ctp since none of the lemmas at the previous
     // level block ctp
     return true;
@@ -2072,13 +2075,13 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
                                     unsigned& solver_level,
                                     expr_ref_vector* core)
 {
-    std::cout << m_name << ": is_invariant " << level << " " << mk_pp(lem->get_expr(), m) << (lem->is_blocked() ? " [blocked]" : "") << "\n";
+    LOG_STREAM << m_name << ": is_invariant " << level << " " << mk_pp(lem->get_expr(), m) << (lem->is_blocked() ? " [blocked]" : "") << "\n";
     if (lem->is_blocked()) return false;
 
     m_stats.m_num_is_invariant++;
     if (is_ctp_blocked(lem)) {
         m_stats.m_num_ctp_blocked++;
-        std::cout << "ctp blocked! not invariant\n";
+        LOG_STREAM << "ctp blocked! not invariant\n";
         return false;
     }
 
@@ -2125,16 +2128,16 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
         SASSERT (level <= solver_level);
     }
     else if (r == l_true) {
-//        std::cout << "CTI: ";
-//        model_smt2_pp(std::cout, m, **mdl_ref_ptr, 0);
-//        std::cout << "\n";
-//        std::cout.flush();
+//        LOG_STREAM << "CTI: ";
+//        model_smt2_pp(LOG_STREAM, m, **mdl_ref_ptr, 0);
+//        LOG_STREAM << "\n";
+//        LOG_STREAM.flush();
         // TBD: optionally remove unused symbols from the model
         if (mdl_ref_ptr) {lem->set_ctp(*mdl_ref_ptr);}
     }
     else {lem->reset_ctp();}
 
-    std::cout << "returning " << (r == l_false) << "\n";
+    LOG_STREAM << "returning " << (r == l_false) << "\n";
     return r == l_false;
 }
 
@@ -2217,7 +2220,7 @@ void pred_transformer::subsume_lemmas(const pt_collection &subsumed_pts)
                 if (is_infty_level(lvl)) {
                     m_solver->assert_expr(lemma->get_expr());
                 } else {
-                    std::cout << m_name << ": subsuming level " << lvl << " lemma from " << subsumed_pt->name() << "\n";
+                    LOG_STREAM << m_name << ": subsuming level " << lvl << " lemma from " << subsumed_pt->name() << "\n";
                     ensure_level (lvl);
                     m_solver->assert_expr (lemma->get_expr(), lvl);
                 }
@@ -2228,8 +2231,8 @@ void pred_transformer::subsume_lemmas(const pt_collection &subsumed_pts)
 
 void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>> &pts)
 {
-    std::cout << "MERGING! " << m_name << "\n";
-    std::cout.flush();
+    LOG_STREAM << "MERGING! " << m_name << "\n";
+    LOG_STREAM.flush();
     // dvvrd: TODO: trace it baby
     expr_ref_vector transition(m);
     expr_ref_vector init(m);
@@ -2296,7 +2299,7 @@ void pred_transformer::merge_child_lemmas(const decls2rel &rels)
             for (unsigned version = 0; version < cfunc.count; ++version) {
                 expr_ref renamed(m);
                 pm.formula_v2v(fml, renamed, 0, version);
-                std::cout << m_name << "::m_reach_solver: merge: assert " << mk_pp(renamed, m) << std::endl;
+                LOG_STREAM << m_name << "::m_reach_solver: merge: assert " << mk_pp(renamed, m) << std::endl;
                 m_reach_solver->assert_expr(renamed);
             }
         }
@@ -2466,9 +2469,11 @@ void pred_transformer::ground_free_vars(expr* e, app_ref_vector& vars,
             // AG: is it useful to make names unique across rules?
             app_ref v(m);
             v = m.mk_fresh_const("aux", fv[i]);
-            v = m.mk_const (pm.get_n_pred(v->get_decl ()));
-            vars[i] = v;
-            aux_vars.push_back(v);
+            app_ref o(m);
+            o = m.mk_const (pm.get_n_pred(v->get_decl ()));
+            pm.associate(v->get_decl(), m_heads[0].func);
+            vars[i] = o;
+            aux_vars.push_back(o);
         }
     }
 
@@ -2584,7 +2589,7 @@ app* pred_transformer::extend_initial (expr *e)
     // -- remember the new extend literal
     m_extend_lit = m.mk_not (v);
 
-    std::cout << "[" << m_name << "]: extend_initial " << mk_pp(ic, m) << " to " << mk_pp(m_extend_lit, m) << std::endl;
+    LOG_STREAM << "[" << m_name << "]: extend_initial " << mk_pp(ic, m) << " to " << mk_pp(m_extend_lit, m) << std::endl;
     return m_extend_lit;
 }
 
@@ -2593,7 +2598,7 @@ app* pred_transformer::extend_initial (expr *e)
 /// pred_transformer::frames
 bool pred_transformer::frames::add_lemma(lemma *new_lemma)
 {
-    std::cout << "add-lemma: " << pp_level(new_lemma->level()) << " "
+    LOG_STREAM << "add-lemma: " << pp_level(new_lemma->level()) << " "
           << m_pt.name() << " "
           << mk_pp(new_lemma->get_expr(), m_pt.get_ast_manager()) << "\n";
     TRACE("spacer", tout << "add-lemma: " << pp_level(new_lemma->level()) << " "
@@ -2669,7 +2674,7 @@ bool pred_transformer::frames::add_lemma(lemma *new_lemma)
         i++;
     }
 
-    std::cout << "ADDING LEMMA " << mk_pp(new_lemma->get_expr(), m_pt.get_ast_manager()) << " IN FACT\n";
+    LOG_STREAM << "ADDING LEMMA " << mk_pp(new_lemma->get_expr(), m_pt.get_ast_manager()) << " IN FACT\n";
     // new_lemma is really new
     m_lemmas.push_back(new_lemma);
     // XXX because m_lemmas is reduced, keep secondary vector of all lemmas
@@ -2690,10 +2695,10 @@ bool pred_transformer::frames::add_lemma(lemma *new_lemma)
 // adds lemma core to m_pt
 void pred_transformer::frames::propagate_to_infinity (unsigned level)
 {
-    std::cout << m_pt.name() << " propagate_to_infinity " << level << "\n";
+    LOG_STREAM << m_pt.name() << " propagate_to_infinity " << level << "\n";
     for (unsigned i = 0, sz = m_lemmas.size (); i < sz; ++i)
         if (m_lemmas[i]->level() >= level && !is_infty_level(m_lemmas [i]->level())) {
-            std::cout << m_pt.name() << ": SETTING LEVEL 'INF' for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
+            LOG_STREAM << m_pt.name() << ": SETTING LEVEL 'INF' for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
             m_lemmas [i]->set_level (infty_level ());
             m_pt.add_lemma_core (m_lemmas [i]);
             m_sorted = false;
@@ -2710,7 +2715,7 @@ void pred_transformer::frames::sort ()
 
 bool pred_transformer::frames::propagate_to_next_level (unsigned level)
 {
-    std::cout << m_pt.name() << " propagate_to_next_level " << level << "\n";
+    LOG_STREAM << m_pt.name() << " propagate_to_next_level " << level << "\n";
     sort ();
     bool all = true;
 
@@ -2725,7 +2730,7 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
 
         unsigned solver_level;
         if (m_pt.is_invariant(tgt_level, m_lemmas.get(i), solver_level)) {
-            std::cout << m_pt.name() << ": SETTING LEVEL " << solver_level << " for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
+            LOG_STREAM << m_pt.name() << ": SETTING LEVEL " << solver_level << " for " << mk_pp(m_lemmas[i]->get_expr(), m_pt.get_ast_manager()) << "\n";
             m_lemmas [i]->set_level (solver_level);
             m_pt.add_lemma_core (m_lemmas.get(i));
 
@@ -3363,7 +3368,7 @@ void context::init_global_smt_params() {
 void context::init_lemma_generalizers()
 {
     reset_lemma_generalizers();
-    std::cout << "m_q3_qgen: " << m_q3_qgen << ", m_use_euf_gen " << m_use_euf_gen
+    LOG_STREAM << "m_q3_qgen: " << m_q3_qgen << ", m_use_euf_gen " << m_use_euf_gen
               << ", m_use_ind_gen " << m_use_ind_gen << ", m_use_array_eq_gen " << m_use_array_eq_gen
               << ", m_validate_lemmas " << m_validate_lemmas << "\n";
 
@@ -3420,6 +3425,7 @@ lbool context::solve(unsigned from_lvl)
 {
     enable_trace("spacer");
     enable_trace("spacer_init_rule");
+    enable_assertions(ENABLE_ASSERTS);
     m_last_result = l_undef;
     try {
         if (m_use_gpdr) {
@@ -3429,14 +3435,14 @@ lbool context::solve(unsigned from_lvl)
         else {
             m_last_result = solve_core (from_lvl);
         }
-        std::cout << "SOLVE CORE FINISHED!!!!\n";
-        std::cout << m_last_result << "\n";
-        std::cout.flush();std::cout.flush();std::cout.flush();
+        LOG_STREAM << "SOLVE CORE FINISHED!!!!\n";
+        LOG_STREAM << m_last_result << "\n";
+        LOG_STREAM.flush();LOG_STREAM.flush();LOG_STREAM.flush();
 
         if (m_last_result == l_false) {
-            std::cout << "m_last_result == l_false\n";
-            std::cout << mk_pp(mk_unsat_answer(), m);
-            std::cout.flush();std::cout.flush();std::cout.flush();
+            LOG_STREAM << "m_last_result == l_false\n";
+            LOG_STREAM << mk_pp(mk_unsat_answer(), m);
+            LOG_STREAM.flush();LOG_STREAM.flush();LOG_STREAM.flush();
             simplify_formulas();
             m_last_result = l_false;
             IF_VERBOSE(1, {
@@ -3828,7 +3834,7 @@ lbool context::solve_core (unsigned from_lvl)
     unsigned max_level = m_max_level;
 
     for (unsigned i = from_lvl; i < max_level; ++i) {
-        std::cout << "\n\n\nEntering level " << i << std::endl;
+        LOG_STREAM << "\n\n\nEntering level " << i << std::endl;
         checkpoint();
         m_expanded_lvl = infty_level ();
         m_stats.m_max_query_lvl = lvl;
@@ -3994,7 +4000,7 @@ bool context::is_reachable(pob &n)
            << " level: " << n.level()
            << " depth: " << (n.depth () - m_pob_queue.min_depth ()) << "\n"
            << mk_pp(n.post(), m) << "\n";);
-    std::cout << "small-is-reachable: " << n.pt().name()
+    LOG_STREAM << "small-is-reachable: " << n.pt().name()
            << " level: " << n.level()
            << " depth: " << (n.depth () - m_pob_queue.min_depth ()) << "\n"
            << mk_pp(n.post(), m) << "\n";
@@ -4027,18 +4033,35 @@ bool context::is_reachable(pob &n)
                                     reach_pred_used, num_reuse_reach);
     n.m_level = saved;
 
+//    bool is_concretely_reachable = true;
+//    for (unsigned i = 0; i < rules.size(); ++i) {
+//        bool concr = is_concrete[i];
+//        is_concretely_reachable &= concr;
+//        const datalog::rule *r = rules[i].first;
+//        if (concr && r && r->get_uninterpreted_tail_size () > 0) {
+//            // -- update must summary
+//            pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+//            reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
+//            rf_pt.add_rf (rf.get ());
+//        }
+//    }
+
     bool is_concretely_reachable = true;
     for (unsigned i = 0; i < rules.size(); ++i) {
-        bool concr = is_concrete[i];
-        is_concretely_reachable &= concr;
-        const datalog::rule *r = rules[i].first;
-        if (concr && r && r->get_uninterpreted_tail_size () > 0) {
-            // -- update must summary
-            pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-            reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
-            rf_pt.add_rf (rf.get ());
+        is_concretely_reachable &= is_concrete[i];
+    }
+    if (is_concretely_reachable) {
+        for (unsigned i = 0; i < rules.size(); ++i) {
+            const datalog::rule *r = rules[i].first;
+            if (is_concrete[i] && r && r->get_uninterpreted_tail_size () > 0) {
+                // -- update must summary
+                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                reach_fact_ref rf = rf_pt.mk_rf (n, *mdl, *r, rules[i].second);
+                rf_pt.add_rf (rf.get ());
+            }
         }
     }
+
 
     if (res != l_true || !is_concretely_reachable) {
         IF_VERBOSE(1, verbose_stream () << " F "
@@ -4161,7 +4184,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                     << std::fixed << std::setprecision(2)
                     << watch.get_seconds () << "\n";);
         n.inc_level();
-        std::cout << "IS BLOCKED SUKA\n";
+        LOG_STREAM << "IS BLOCKED SUKA\n";
         out.push_back(&n);
         return l_false;
     }
@@ -4186,25 +4209,42 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
         bool all_rules_covered = rules.size() == n.pt().heads().size();
         bool is_concretely_reachable = true;
+//        for (unsigned i = 0; i < rules.size(); ++i) {
+//            const datalog::rule *r = rules[i].first;
+//            is_concretely_reachable &= is_concrete[i];
+//            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
+//                // -- update must summary
+//                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+//                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+//                checkpoint ();
+//                rf_pt.add_rf (rf.get ());
+//                checkpoint ();
+//            }
+//        }
         for (unsigned i = 0; i < rules.size(); ++i) {
-            const datalog::rule *r = rules[i].first;
             is_concretely_reachable &= is_concrete[i];
-            if (is_concrete[i] && r && r->get_uninterpreted_tail_size() > 0) {
-                // -- update must summary
-                pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
-                reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
-                checkpoint ();
-                rf_pt.add_rf (rf.get ());
-                checkpoint ();
+        }
+
+        if (is_concretely_reachable) {
+            for (unsigned i = 0; i < rules.size(); ++i) {
+                const datalog::rule *r = rules[i].first;
+                if (r && r->get_uninterpreted_tail_size() > 0) {
+                    // -- update must summary
+                    pred_transformer &rf_pt = get_pred_transformer(r->get_decl());
+                    reach_fact_ref rf = rf_pt.mk_rf (n, *model, *r, rules[i].second);
+                    checkpoint ();
+                    rf_pt.add_rf (rf.get ());
+                    checkpoint ();
+                }
             }
         }
 
         // must-reachable
         if (is_concretely_reachable && all_rules_covered) {
-            std::cout << "is_concretely_reachable && all_rules_covered\n";
-//            std::cout << "concrete model:\n";
-//            model_smt2_pp(std::cout, m, *model, 0);
-//            std::cout << "\n";
+            LOG_STREAM << "is_concretely_reachable && all_rules_covered\n";
+//            LOG_STREAM << "concrete model:\n";
+//            model_smt2_pp(LOG_STREAM, m, *model, 0);
+//            LOG_STREAM << "\n";
             // if n has a derivation, create a new child and report l_undef
             // otherwise if n has no derivation or no new children, report l_true
             pob *next = nullptr;
@@ -4227,7 +4267,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                             tout << "[dvvrd] PUSHING NEXT POB: [" << (long)next << "] [parent: "
                                       << (long)(next->parent()) <<  "] (" << next->pt().name() << ") "
                                       << mk_pp(next->post(), m) << "\n";);
-                    std::cout << "[dvvrd] PUSHING NEXT POB: [" << (long)next << "] [parent: "
+                    LOG_STREAM << "[dvvrd] PUSHING NEXT POB: [" << (long)next << "] [parent: "
                               << (long)(next->parent()) <<  "] (" << next->pt().name() << ", lvl " << next->level() << ") "
                               << mk_pp(next->post(), m) << "\n";
                     out.push_back (next);
@@ -4239,9 +4279,9 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                        << std::fixed << std::setprecision(2)
                        << watch.get_seconds () << "\n";);
             if (next) {
-                std::cout << "next is " << next->pt().name() << " " << mk_pp(next->post(), m) << "\n";
+                LOG_STREAM << "next is " << next->pt().name() << " " << mk_pp(next->post(), m) << "\n";
             }
-            std::cout << "expand-pob: " << (next ? l_undef : l_true) << "\n";
+            LOG_STREAM << "expand-pob: " << (next ? l_undef : l_true) << "\n";
             return next ? l_undef : l_true;
         }
 
@@ -4251,7 +4291,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                     tout << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
                          <<  "] (" << n.pt().name() << ") "
                          << mk_pp(n.post(), m) << "\n";);
-            std::cout << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
+            LOG_STREAM << "[dvvrd] RE-PUSHING POB: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
                       <<  "] (" << n.pt().name() << ", lvl " << n.level() << ") "
                          << mk_pp(n.post(), m) << "\n";
             out.push_back(&n);
@@ -4282,7 +4322,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         pob_ref nref(&n);
         // -- create lemma from a pob and last unsat core
         lemma_ref lemma = alloc(class lemma, pob_ref(&n), cube, uses_level);
-        std::cout << n.pt().name() << ": lemma before generalization: " << cube << "\n";
+        LOG_STREAM << n.pt().name() << ": lemma before generalization: " << cube << "\n";
 
         // -- run all lemma generalizers
         for (unsigned i = 0;
@@ -4298,10 +4338,10 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             );
 
 
-        std::cout << "invariant state: "
+        LOG_STREAM << "invariant state: "
               << (is_infty_level(lemma->level())?"(inductive)":"")
               <<  mk_pp(lemma->get_expr(), m) << "\n";
-        std::cout << "lemma cube: " << lemma->get_cube() << "\n";
+        LOG_STREAM << "lemma cube: " << lemma->get_cube() << "\n";
 
         TRACE("spacer", tout << "invariant state: "
               << (is_infty_level(lemma->level())?"(inductive)":"")
@@ -4324,7 +4364,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                     SASSERT(!f->is_in_queue());
                     f->inc_level();
                     //f->set_farkas_generalizer(false);
-                    std::cout << "[dvvrd] PUSHING POB IN STRANGE CASE: [" << (long)f << "] [parent: "
+                    LOG_STREAM << "[dvvrd] PUSHING POB IN STRANGE CASE: [" << (long)f << "] [parent: "
                               << (long)(f->parent()) <<  "] (" << f->pt().name() << ", lvl " << f->level() << ") "
                               << mk_pp(f->post(), m) << "\n";
                     out.push_back(f);
@@ -4334,7 +4374,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 
         // schedule the node to be placed back in the queue
         n.inc_level();
-        std::cout << "[dvvrd] PUSHING POB AFTER GENERALIZATION: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
+        LOG_STREAM << "[dvvrd] PUSHING POB AFTER GENERALIZATION: [" << (long)(&n) << "] [parent: " << (long)(n.parent())
                   <<  "] (" << n.pt().name() << ", lvl " << n.level() << ") "
                      << mk_pp(n.post(), m) << "\n";
         out.push_back(&n);
@@ -4399,7 +4439,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 bool context::propagate(unsigned min_prop_lvl,
                         unsigned max_prop_lvl, unsigned full_prop_lvl)
 {
-    std::cout << "propagate " << min_prop_lvl << " " << max_prop_lvl << " " << full_prop_lvl << "\n";
+    LOG_STREAM << "propagate " << min_prop_lvl << " " << max_prop_lvl << " " << full_prop_lvl << "\n";
     scoped_watch _w_(m_propagate_watch);
 
     if (min_prop_lvl == infty_level()) { return false; }
@@ -4560,10 +4600,10 @@ bool context::create_children(pob& n,
                               const vector<bool> &reach_pred_used,
                               pob_ref_buffer &out)
 {
-    std::cout << "create-children " << n.pt().name() << "\n";
-    std::cout << "versions of rules: ";
-    for (auto &p : rules) { std::cout << p.first->get_head()->get_name() << " " << p.second << "; "; }
-    std::cout << std::endl;
+    LOG_STREAM << "create-children " << n.pt().name() << "\n";
+    LOG_STREAM << "versions of rules: ";
+    for (auto &p : rules) { LOG_STREAM << p.first->get_head()->get_name() << " " << p.second << "; "; }
+    LOG_STREAM << std::endl;
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
 
@@ -4572,7 +4612,7 @@ bool context::create_children(pob& n,
     pt.get_transitions(rules, forms);
     pt.get_initials(rules, mdl, forms);
     forms.push_back(n.post());
-    std::cout << "forms: " << forms << std::endl;
+    LOG_STREAM << "forms: " << forms << std::endl;
 
     TRACE("spacer",
           tout << "Model:\n";
@@ -4595,8 +4635,8 @@ bool context::create_children(pob& n,
     // skolems of the pob
     n.get_skolems(vars);
 
-    std::cout << "after picking: " << mk_pp(phi, m) << std::endl;
-    std::cout << "vars: " << vars << std::endl;
+    LOG_STREAM << "after picking: " << mk_pp(phi, m) << std::endl;
+    LOG_STREAM << "vars: " << vars << std::endl;
     n.pt().mbp(vars, phi, mdl, true, use_ground_pob());
     //qe::reduce_array_selects (*mev.get_model (), phi1);
     SASSERT (!m_ground_pob || vars.empty ());
@@ -4618,7 +4658,7 @@ bool context::create_children(pob& n,
         }
     }
 
-    std::cout << "alloc derivation with phi: " << mk_pp(phi, m) << std::endl;
+    LOG_STREAM << "alloc derivation with phi: " << mk_pp(phi, m) << std::endl;
     derivation *deriv = alloc(derivation, n, phi, vars);
 
 /////// ----- begin of old code -------
@@ -4633,12 +4673,12 @@ bool context::create_children(pob& n,
 //        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
 //    }
 
-//    std::cout << "------------------------------\n";
+//    LOG_STREAM << "------------------------------\n";
 //    for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
 //        unsigned j = kid_order[i];
 
 //        pred_transformer &pt = get_pred_transformer(preds.get(j));
-//        std::cout << "CREATE_CHILDREN (LEVEL" << n.level() << "): " << pt.name() << " is " << (reach_pred_used[j] ? "rf" : "sum") << "\n";
+//        LOG_STREAM << "CREATE_CHILDREN (LEVEL" << n.level() << "): " << pt.name() << " is " << (reach_pred_used[j] ? "rf" : "sum") << "\n";
 
 //        const ptr_vector<app> *aux = nullptr;
 //        expr_ref sum(m);
@@ -4677,7 +4717,7 @@ bool context::create_children(pob& n,
                     dealloc(deriv);
                     return false;
                 }
-                std::cout << "adding reachability premise " << h->get_name() << " " << version << "\n";
+                LOG_STREAM << "adding reachability premise " << h->get_name() << " " << version << "\n";
                 deriv->add_reachability_premise(pt, h, i, version, sum, aux);
             } else {
                 // dvvrd: TODO: remove copy-paste!
@@ -4690,14 +4730,14 @@ bool context::create_children(pob& n,
                     }
                 }
                 if (is_recursive) {
-                    std::cout << "adding recursive summary premise " << h->get_name() << " " << version << "\n";
+                    LOG_STREAM << "adding recursive summary premise " << h->get_name() << " " << version << std::endl;
                     rec_heads.push_back(h);
                     unsigned v = 0;
                     while (rec_oidcs.contains({h, v})) ++v;
                     m_pm.add_source_subst(rec_source_subst, h, version, i, v);
                     m_pm.add_o_subst(rec_oidcs, h, v, i, version);
                 } else {
-                    std::cout << "adding non-recursive summary premise " << h->get_name() << " " << version << "\n";
+                    LOG_STREAM << "adding non-recursive summary premise " << h->get_name() << " " << version << std::endl;
                     nonrec_heads.push_back(h);
                     unsigned v = 0;
                     while (nonrec_oidcs.contains({h, v})) ++v;
@@ -4713,7 +4753,7 @@ bool context::create_children(pob& n,
     // TODO: rec_heads should not have more heads of each func/version than heads!
     // The more precise grouping should be implemented!
 
-    std::cout << "rules count: " << rules.size() << "\n";
+    LOG_STREAM << "rules count: " << rules.size() << "\n";
     if (!rec_heads.empty()) {
         pred_transformer &premise_pt = get_pred_transformer(rec_heads);
         // dvvrd: TODO: remove copy-paste!
@@ -4722,11 +4762,11 @@ bool context::create_children(pob& n,
         expr_ref sum(m);
         sum = premise_pt.get_origin_summary (mdl, prev_level(n.level()), rec_oidcs, false, &aux);
         if (!sum) {
-            std::cout << "BAILING OUT REC\n";
+            LOG_STREAM << "BAILING OUT REC\n";
             dealloc(deriv);
             return false;
         }
-        std::cout << "creating recursive child " << premise_pt.name() << "\n";
+        LOG_STREAM << "creating recursive child " << premise_pt.name() << "\n";
         deriv->add_summary_premise(premise_pt, rec_source_subst, rec_oidcs, sum);
     }
     if (!nonrec_heads.empty()) {
@@ -4734,13 +4774,13 @@ bool context::create_children(pob& n,
         const ptr_vector<app> *aux = nullptr;
         expr_ref sum(m);
         sum = premise_pt.get_origin_summary (mdl, prev_level(n.level()), nonrec_oidcs, false, &aux);
-        std::cout << "SUKAAA NON_REC OR SUM FOR " << premise_pt.name() << " RETURNED " << mk_pp(sum, m) << "\n";
+        LOG_STREAM << "SUKAAA NON_REC OR SUM FOR " << premise_pt.name() << " RETURNED " << mk_pp(sum, m) << "\n";
         if (!sum) {
-            std::cout << "BAILING OUT NONREC\n";
+            LOG_STREAM << "BAILING OUT NONREC\n";
             dealloc(deriv);
             return false;
         }
-        std::cout << "creating non-recursive child " << premise_pt.name() << "\n";
+        LOG_STREAM << "creating non-recursive child " << premise_pt.name() << "\n";
         deriv->add_summary_premise(premise_pt, nonrec_source_subst, nonrec_oidcs, sum);
     }
 
@@ -4770,7 +4810,7 @@ bool context::create_children(pob& n,
     if (m_weak_abs && !is_true)
     { kid->reset_derivation(); }
 
-    std::cout << "[dvvrd] PUSHING KID POB: [" << (long)kid << "] [parent: "
+    LOG_STREAM << "[dvvrd] PUSHING KID POB: [" << (long)kid << "] [parent: "
               << (long)(kid->parent()) <<  "] (" << kid->pt().name() << ", lvl " << kid->level() << ") "
               << mk_pp(kid->post(), m) << "\n";
     out.push_back(kid);
