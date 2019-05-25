@@ -456,6 +456,50 @@ class pred_transformer {
             bool match_next();
         };
 
+        class increasing_occurrence_matcher {
+            manager &pm;
+            func_decl *m_head;
+            const unsigned m_count;
+            const vector<occurrence> &m_occs;
+            rules_cache &m_used_rules;
+            manager::idx_subst &m_subst;
+            app_ref_vector &m_app_tags;
+            vector<unsigned> m_pointers;
+            unsigned m_app_tags_base;
+            bool m_initialized;
+
+            bool shift_from(unsigned occ_index);
+            bool shift_to(unsigned index, unsigned occ_index);
+            bool shift_to_next(unsigned index);
+
+        public:
+            increasing_occurrence_matcher(manager &pm, func_decl *head,
+                                        unsigned count, const vector<occurrence> &occs,
+                                        rules_cache &used_rules,
+                                        manager::idx_subst &subst,
+                                        app_ref_vector &app_tags)
+                : pm(pm),
+                  m_head(head),
+                  m_count(count),
+                  m_occs(occs),
+                  m_used_rules(used_rules),
+                  m_subst(subst),
+                  m_app_tags(app_tags),
+                  m_pointers(count, static_cast<unsigned>(0)),
+                  m_app_tags_base(m_app_tags.size()),
+                  m_initialized(false)
+            {
+                m_app_tags.resize(m_app_tags_base + m_count);
+            }
+
+            ~increasing_occurrence_matcher() {
+                m_app_tags.resize(m_app_tags_base);
+            }
+
+            bool match_next();
+        };
+
+
         void insert_multiset(func_decl_multiset &set, func_decl *f);
         bool multiset_contains(const func_decl_multiset &body,
                                func_decl *elem, unsigned count) const;

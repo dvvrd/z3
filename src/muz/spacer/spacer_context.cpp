@@ -21,8 +21,8 @@ Notes:
 --*/
 
 #define ENABLE_ASSERTS false
-#define LOG_STREAM std::cout
-//#define LOG_STREAM tout
+//#define LOG_STREAM std::cout
+#define LOG_STREAM tout
 
 #include <sstream>
 #include <iomanip>
@@ -921,6 +921,65 @@ bool pred_transformer::occurrence_cache::occurrence_matcher::match_next() {
     return (m_pointers[0] < max);
 }
 
+bool pred_transformer::occurrence_cache::increasing_occurrence_matcher::shift_from(
+        unsigned occ_index) {
+    const occurrence &from_occ = m_occs[occ_index];
+    func_decl *from_head = from_occ.rule->get_decl();
+    versioned_rule &from_entry = m_used_rules.find({from_head, from_occ.version});
+    SASSERT(from_occ.rule == from_entry.first && from_entry.second > 0);
+    --from_entry.second;
+    return true;
+}
+
+bool pred_transformer::occurrence_cache::increasing_occurrence_matcher::shift_to(unsigned index, unsigned occ_index) {
+    const occurrence &to_occ = m_occs[occ_index];
+    func_decl *to_head = to_occ.rule->get_decl();
+    versioned_rule &to_entry = m_used_rules.insert_if_not_there2({to_head, to_occ.version}, {nullptr, 0})->get_data().m_value;
+    if (to_entry.first == to_occ.rule || to_entry.second == 0) {
+        to_entry.first = to_occ.rule;
+        ++to_entry.second;
+    } else {
+        return false;
+    }
+
+    pm.add_o_subst(m_subst, m_head, index, to_occ.idx, to_occ.version);
+    func_decl *vtag = pm.get_version_pred(to_occ.app_tag->get_decl(), 0, to_occ.version);
+    m_app_tags.set(m_app_tags_base + index, pm.get_manager().mk_const(vtag));
+    return true;
+}
+
+bool pred_transformer::occurrence_cache::increasing_occurrence_matcher::shift_to_next(unsigned index) {
+    if (index >= m_count) {return true;}
+    unsigned &ptr = m_pointers.get(index);
+    unsigned max = m_occs.size();
+    if (ptr >= max) {ptr = 0;}
+    do {
+        while (ptr < max && ((index == 0 && !shift_to(index, ptr)) || (index > 0 && ptr <= m_pointers.get(index-1)) || (index > 0 && ptr > m_pointers.get(index-1) && !shift_to(index, ptr)))) ++ptr;
+    } while (ptr < max && !shift_to_next(index + 1) && shift_from(ptr++));
+    return ptr < max;
+}
+
+bool pred_transformer::occurrence_cache::increasing_occurrence_matcher::match_next() {
+    if (!m_initialized) {
+        m_initialized = true;
+        return shift_to_next(0);
+    }
+    unsigned index = m_count;
+    unsigned max = m_occs.size();
+    SASSERT(m_pointers[0] < max);
+    while (index > 0) {
+        --index;
+        unsigned &ptr = m_pointers.get(index);
+        SASSERT(ptr < max);
+        shift_from(ptr);
+        ++ptr;
+        if (ptr < max && shift_to_next(index)) {
+            break;
+        }
+    }
+    return (m_pointers[0] < max);
+}
+
 void pred_transformer::occurrence_cache::mk_assumptions_rec(
         const func_decl_multivector &heads, unsigned idx,
         rules_cache &used_rules,
@@ -945,9 +1004,29 @@ void pred_transformer::occurrence_cache::mk_assumptions_rec(
 
     const vector<occurrence> &occs = e->get_data().m_value;
     // TODO: choose optimal matching strategy
-    occurrence_matcher matcher(pm, h, count, occs, used_rules, subst, app_tags);
-    while (matcher.match_next()) {
-        mk_assumptions_rec(heads, idx + 1, used_rules, subst, app_tags, fml, result);
+    // TODO: remove copy-paste!!
+    if (occs.size() > 4) {
+        increasing_occurrence_matcher matcher(pm, h, count, occs, used_rules, subst, app_tags);
+        LOG_STREAM << "using increasing matcher" << std::endl;
+        while (matcher.match_next()) {
+            LOG_STREAM << "matched! app_tags: ";
+            for (auto &tag : app_tags) {
+                LOG_STREAM << mk_pp(tag, pm.get_manager()) << " ";
+            }
+            LOG_STREAM << std::endl;
+            mk_assumptions_rec(heads, idx + 1, used_rules, subst, app_tags, fml, result);
+        }
+    } else {
+        LOG_STREAM << "using complete matcher" << std::endl;
+        occurrence_matcher matcher(pm, h, count, occs, used_rules, subst, app_tags);
+        while (matcher.match_next()) {
+            LOG_STREAM << "matched! app_tags: ";
+            for (auto &tag : app_tags) {
+                LOG_STREAM << mk_pp(tag, pm.get_manager()) << " ";
+            }
+            LOG_STREAM << std::endl;
+            mk_assumptions_rec(heads, idx + 1, used_rules, subst, app_tags, fml, result);
+        }
     }
 }
 
