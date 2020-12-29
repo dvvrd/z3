@@ -85,7 +85,8 @@ class manager {
 
 public:
     typedef sym_mux::idx_subst idx_subst;
-    typedef sym_mux::source_subst source_subst;
+    typedef sym_mux::ext_idx_subst ext_idx_subst;
+    typedef sym_mux::subst subst;
 
     manager(ast_manager & manager);
 
@@ -96,8 +97,6 @@ public:
     //"o" predicates stand for the old states and "n" for the new states
     func_decl * get_o_pred(func_decl * s, unsigned idx);
     func_decl * get_n_pred(func_decl * s);
-    func_decl * get_version_pred(func_decl * s, unsigned src_version, unsigned tgt_version)
-    {return m_mux.shift_version(s, src_version, tgt_version);}
 
     bool is_n_formula(expr * f) const
     {return m_mux.is_homogenous_formula(f, n_index());}
@@ -130,18 +129,17 @@ public:
                         result, homogenous);}
 
 
-    void add_o_subst(idx_subst &subst, func_decl *p, unsigned src_version,
-                     unsigned o_idx, unsigned tgt_version) const
-    {subst.insert({p, src_version}, {o_index(o_idx), tgt_version});}
+    void add_o_subst(idx_subst &subst, func_decl *p, unsigned o_idx) const
+    {subst.insert(p, o_index(o_idx));}
 
-    void add_source_subst(source_subst &subst, func_decl *p, unsigned src_version,
-                     unsigned o_idx, unsigned tgt_version) const
-    {subst.insert({p, src_version, o_index(o_idx)}, tgt_version);}
+    void add_o_subst_ext(ext_idx_subst &subst, func_decl *p, unsigned o_idx,
+                         func_decl *tgt) const
+    {subst.insert({p, o_index(o_idx)}, tgt);}
 
 
-    void formula_o2n(expr * f, expr_ref & result, const source_subst &o_idcs,
+    void formula_o2tgt(expr * f, expr_ref & result, const ext_idx_subst &o_idcs,
                      bool homogenous = true) const
-    {m_mux.shift_expr(f, o_idcs, n_index(), result, homogenous);}
+    {m_mux.shift_expr(f, o_idcs, result, homogenous);}
 
     void formula_n2o(expr * f, expr_ref & result, const idx_subst &o_idcs,
                      bool homogenous = true) const
@@ -152,13 +150,9 @@ public:
     {m_mux.shift_expr(src, o_index(src_idx), o_index(tgt_idx),
                         tgt, homogenous);}
 
-    void formula_v2v(expr * f, expr_ref & result,
-                     unsigned src_version, unsigned tgt_version) const
-    {m_mux.shift_version(f, src_version, tgt_version, result);}
-
-    void formulas_v2v(expr_ref_vector const & input, expr_ref_vector & output,
-                     unsigned src_version, unsigned tgt_version) const
-    {m_mux.shift_version(input, output, src_version, tgt_version);}
+    void substitute(expr * f, expr_ref & result, const subst &subst,
+                     bool homogenous = true) const
+    {m_mux.substitute(f, subst, result, homogenous);}
 
 };
 

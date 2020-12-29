@@ -51,7 +51,8 @@ class pob_queue;
 class context;
 
 typedef map<func_decl_multivector, pred_transformer*, func_decl_multivector_hash, func_decl_multivector_eq> decls2rel;
-typedef vector<std::pair<const datalog::rule*, unsigned>> versioned_rule_vector;
+typedef std::pair<const datalog::rule *, unsigned> indexed_rule;
+typedef vector<indexed_rule> indexed_rule_vector;
 
 class pob;
 typedef ref<pob> pob_ref;
@@ -397,17 +398,17 @@ class pred_transformer {
         void reset() { m_rules.reset(); }
     };
 
+    //
     class occurrence_cache {
         struct occurrence {
             const datalog::rule *rule;
             unsigned idx;
-            unsigned version;
+            unsigned rule_index;
             app *app_tag;
         };
         typedef obj_map<func_decl, unsigned> func_decl_multiset;
         typedef obj_map<func_decl, vector<occurrence>> occurrence_map;
-        typedef std::pair<const datalog::rule *, unsigned> versioned_rule;
-        typedef versioned_func_map<versioned_rule> rules_cache;
+        typedef versioned_func_map<indexed_rule> rules_cache;
 
         manager &pm;
         func_decl_multiset m_body_multiset;
@@ -419,7 +420,7 @@ class pred_transformer {
             const unsigned m_count;
             const vector<occurrence> &m_occs;
             rules_cache &m_used_rules;
-            manager::idx_subst &m_subst;
+            manager::subst &m_subst;
             app_ref_vector &m_app_tags;
             vector<unsigned> m_pointers;
             unsigned m_app_tags_base;
@@ -433,7 +434,7 @@ class pred_transformer {
             occurrence_matcher(manager &pm, func_decl *head,
                                         unsigned count, const vector<occurrence> &occs,
                                         rules_cache &used_rules,
-                                        manager::idx_subst &subst,
+                                        manager::subst &subst,
                                         app_ref_vector &app_tags)
                 : pm(pm),
                   m_head(head),
@@ -462,7 +463,7 @@ class pred_transformer {
             const unsigned m_count;
             const vector<occurrence> &m_occs;
             rules_cache &m_used_rules;
-            manager::idx_subst &m_subst;
+            manager::subst &m_subst;
             app_ref_vector &m_app_tags;
             vector<unsigned> m_pointers;
             unsigned m_app_tags_base;
@@ -476,7 +477,7 @@ class pred_transformer {
             increasing_occurrence_matcher(manager &pm, func_decl *head,
                                         unsigned count, const vector<occurrence> &occs,
                                         rules_cache &used_rules,
-                                        manager::idx_subst &subst,
+                                        manager::subst &subst,
                                         app_ref_vector &app_tags)
                 : pm(pm),
                   m_head(head),
@@ -507,7 +508,7 @@ class pred_transformer {
                     const func_decl_multivector &sorted_decls) const;
         void mk_assumptions_rec(const func_decl_multivector &heads, unsigned idx,
                                 rules_cache &used_rules,
-                                manager::idx_subst &subst,
+                                manager::subst &subst,
                                 app_ref_vector &app_tags,
                                 expr *fml,
                                 expr_ref_vector& result);
@@ -535,6 +536,7 @@ class pred_transformer {
     func_decl_multivector        m_heads;           // predicates
     symbol                       m_name;            // name
     ptr_vector<func_decl>        m_sig;             // signature
+    vector<unsigned>             m_sig_idcs;        // starting index of arguments
     func_decl_ref                m_merged_head;     // predicate representing this transformer in models
     ptr_vector<pred_transformer> m_use;             // places where 'this' is referenced.
     pt_rules                     m_pt_rules;           // pt rules used to derive transformer
@@ -598,8 +600,8 @@ public:
         return nullptr;
     }
     void find_predecessors(datalog::rule const& r, ptr_vector<func_decl> & predicates) const;
-    void find_predecessors(versioned_rule_vector const& rules,
-                           vector<versioned_func> & predicates) const;
+    void find_predecessors(indexed_rule_vector const& rules,
+                           vector<indexed_func> & predicates) const;
 
     void add_rule(datalog::rule* r) {m_rules.push_back(r);}
     void add_use(pred_transformer* pt) {if (!m_use.contains(pt)) {m_use.insert(pt);}}
@@ -615,7 +617,8 @@ public:
     ptr_vector<datalog::rule> const& rules() const {return m_rules;}
     func_decl* sig(unsigned i) const {return m_sig[i];} // signature
     func_decl* const* sig() {return m_sig.c_ptr();}
-    unsigned  sig_size() const {return m_sig.size();}
+    unsigned sig_size() const {return m_sig.size();}
+    unsigned sig_idx(unsigned rel_idx) const {return m_sig_idcs[rel_idx];}
     expr*  transition() const {return m_transition;}
     expr*  init() const {return m_init;}
     expr*  rule2tag(datalog::rule const* r) {
@@ -650,18 +653,18 @@ public:
                                 const ptr_vector<app> **aux);
 
     bool is_ctp_blocked(lemma *lem);
-    void find_rules(model &mdl, versioned_rule_vector& rules);
+    void find_rules(model &mdl, indexed_rule_vector& rules);
     void find_rules(model &mev, vector<bool>& is_concrete,
                     vector<bool>& reach_pred_used,
                     unsigned& num_reuse_reach,
-                    versioned_rule_vector& rules);
+                    indexed_rule_vector& rules);
     expr* get_transition(datalog::rule const& r) {
         SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
         pt_rule *p;
         return m_pt_rules.find_by_rule(r, p) ? p->trans() : nullptr;
     }
-    void get_transitions(versioned_rule_vector const& rules, expr_ref_vector &transitions);
-    void get_initials(versioned_rule_vector const& rules, model &mdl,
+    void get_transitions(indexed_rule_vector const& rules, expr_ref_vector &transitions);
+    void get_initials(indexed_rule_vector const& rules, model &mdl,
                       expr_ref_vector &transitions);
     ptr_vector<app>& get_aux_vars(datalog::rule const& r) {
         SASSERT(m_heads.size() == 1 && m_heads[0].count == 1);
@@ -669,7 +672,7 @@ public:
         VERIFY(m_pt_rules.find_by_rule(r, p));
         return p->auxs();
     }
-    void get_aux_vars(versioned_rule_vector const& rules, app_ref_vector& vars);
+    void get_aux_vars(indexed_rule_vector const& rules, app_ref_vector& vars);
 
     bool propagate_to_next_level(unsigned level);
     void propagate_to_infinity(unsigned level);
@@ -701,7 +704,7 @@ public:
 
     lbool is_reachable(pob& n, expr_ref_vector* core, model_ref *model,
                        unsigned& uses_level, vector<bool>& is_concrete,
-                       versioned_rule_vector& r,
+                       indexed_rule_vector& r,
                        vector<bool>& reach_pred_used,
                        unsigned& num_reuse_reach);
     bool is_invariant(unsigned level, lemma* lem,
@@ -904,8 +907,8 @@ class derivation {
     /// a single premise of a derivation
     class premise {
         pred_transformer &m_pt;
-        /// origin orders in the rule
-        manager::source_subst m_oidcs;
+        /// substitution to rename queries into new variables
+        manager::ext_idx_subst m_subst;
         /// summary fact corresponding to the premise
         expr_ref m_summary;
         ///  whether this is a must or may premise
@@ -915,14 +918,14 @@ class derivation {
     public:
         premise (pred_transformer &pt, func_decl *decl, unsigned oidx, unsigned version,
                  expr *summary, const ptr_vector<app> *aux_vars = nullptr);
-        premise (pred_transformer &pt, const manager::source_subst &subst,
+        premise (pred_transformer &pt, const manager::ext_idx_subst &subst,
                  const manager::idx_subst &oidcs, expr *summary);
         premise (const premise &p);
 
         bool is_must() {return m_must;}
         expr * get_summary() {return m_summary.get ();}
         const app_ref_vector &get_ovars() {return m_ovars;}
-        const manager::source_subst &get_oidcs() {return m_oidcs;}
+        const manager::ext_idx_subst &get_subst() {return m_subst;}
         pred_transformer &pt() {return m_pt;}
 
         /// \brief Updated the summary.
@@ -954,7 +957,7 @@ public:
                                    func_decl *decl, unsigned oidx,
                                    unsigned version, expr * summary,
                                    const ptr_vector<app> *aux_vars = nullptr);
-    void add_summary_premise (pred_transformer &pt, const manager::source_subst &subst,
+    void add_summary_premise (pred_transformer &pt, const manager::ext_idx_subst &subst,
                               const manager::idx_subst &oidcs, expr *summary);
 
     /// creates the first child. Must be called after all the premises
@@ -1166,7 +1169,7 @@ class context {
     bool is_reachable(pob &n);
     lbool expand_pob(pob &n, pob_ref_buffer &out);
     bool create_children(pob& n,
-                         versioned_rule_vector &rules,
+                         indexed_rule_vector &rules,
                          model &mdl,
                          const vector<bool>& reach_pred_used,
                          pob_ref_buffer &out);
