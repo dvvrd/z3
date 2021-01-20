@@ -20,10 +20,6 @@ Notes:
 
 --*/
 
-#define ENABLE_ASSERTS false
-//#define LOG_STREAM std::cout
-#define LOG_STREAM tout
-
 #include <sstream>
 #include <iomanip>
 
@@ -59,6 +55,18 @@ Notes:
 #include "muz/spacer/spacer_sat_answer.h"
 
 #define WEAKNESS_MAX 65535
+
+class NullBuffer : public std::streambuf
+{
+public:
+  int overflow(int c) { return c; }
+};
+NullBuffer null_buffer;
+std::ostream null_stream(&null_buffer);
+
+#define ENABLE_ASSERTS false
+//#define LOG_STREAM std::cout
+#define LOG_STREAM null_stream
 
 namespace spacer {
 
@@ -427,20 +435,22 @@ pob *derivation::create_next_child ()
     // get an implicant of the summary
     expr_ref_vector u(m), lits(m);
     ptr_vector<app> aux_vars;
+    unsigned real_version = 0;
     for (auto &cfunc : pt.heads()) {
         func_decl *h = cfunc.func;
         unsigned count = cfunc.count;
         pred_transformer &pt = get_context().get_pred_transformer(h);
         for (unsigned version = 0; version < count; ++version) {
             // find must summary used
-            reach_fact *rf = pt.get_used_rf (*mdl, version, true);
+            reach_fact *rf = pt.get_used_rf (*mdl, real_version, true);
             expr_ref renamed(m);
-            pm.formula_v2v(rf->get (), renamed, 0, version);
+            pm.formula_v2v(rf->get (), renamed, 0, real_version);
             u.push_back (renamed);
             for (app *var : rf->aux_vars()) {
-                pm.formula_v2v(var, renamed, 0, version);
+                pm.formula_v2v(var, renamed, 0, real_version);
                 aux_vars.push_back(to_app(renamed));
             }
+            ++real_version;
         }
     }
     compute_implicant_literals (*mdl, u, lits);
@@ -807,20 +817,22 @@ const app_ref_vector &pred_transformer::pt_rules::mk_app_tags(manager &pm, pred_
 
 void pred_transformer::occurrence_cache::init(const vector<std::pair<pt_rules&, unsigned>> &crules)
 {
+    unsigned real_version = 0;
     for (auto &pair : crules) {
         const class pt_rules &rules = pair.first;
         unsigned count = pair.second;
-        for (auto &kv : rules) {
-            const datalog::rule &r = kv.get_value()->rule();
-            for (unsigned i = 0; i < r.get_uninterpreted_tail_size(); ++i) {
-                for (unsigned version = 0; version < count; ++version) {
+        for (unsigned version = 0; version < count; ++version) {
+            for (auto &kv : rules) {
+                const datalog::rule &r = kv.get_value()->rule();
+                for (unsigned i = 0; i < r.get_uninterpreted_tail_size(); ++i) {
                     func_decl *f = r.get_tail(i)->get_decl();
                     insert_multiset(m_body_multiset, f);
-                    occurrence occ { &r, i, version, kv.get_value()->app_tag(i) };
+                    occurrence occ { &r, i, real_version, kv.get_value()->app_tag(i) };
                     auto *e = m_occurrences.insert_if_not_there2(f, vector<occurrence>());
                     e->get_data().m_value.push_back(occ);
                 }
             }
+            ++real_version;
         }
     }
 }
@@ -883,7 +895,7 @@ bool pred_transformer::occurrence_cache::occurrence_matcher::shift_to(unsigned i
         return false;
     }
 
-    pm.add_o_subst(m_subst, m_head, index, to_occ.idx, to_occ.version);
+    pm.add_o_subst(m_subst, m_head, m_app_tags_base + index, to_occ.idx, to_occ.version);
     func_decl *vtag = pm.get_version_pred(to_occ.app_tag->get_decl(), 0, to_occ.version);
     m_app_tags.set(m_app_tags_base + index, pm.get_manager().mk_const(vtag));
     return true;
@@ -942,7 +954,7 @@ bool pred_transformer::occurrence_cache::increasing_occurrence_matcher::shift_to
         return false;
     }
 
-    pm.add_o_subst(m_subst, m_head, index, to_occ.idx, to_occ.version);
+    pm.add_o_subst(m_subst, m_head, m_app_tags_base + index, to_occ.idx, to_occ.version);
     func_decl *vtag = pm.get_version_pred(to_occ.app_tag->get_decl(), 0, to_occ.version);
     m_app_tags.set(m_app_tags_base + index, pm.get_manager().mk_const(vtag));
     return true;
@@ -1149,6 +1161,7 @@ void pred_transformer::reset_statistics()
 void pred_transformer::init_sig()
 {
     ptr_vector<sort> domain;
+    unsigned real_version = 0;
     for (auto &cfunc : m_heads) {
         func_decl *head = cfunc.func;
         for (unsigned version = 0; version < cfunc.count; ++version) {
@@ -1159,9 +1172,10 @@ void pred_transformer::init_sig()
                 name_stm << head->get_name() << '_' << i;
                 func_decl_ref stm(m);
                 stm = m.mk_func_decl(symbol(name_stm.str().c_str()), 0, (sort*const*)nullptr, arg_sort);
-                m_sig.push_back(pm.get_version_pred(pm.get_o_pred(stm, 0), 0, version));
+                m_sig.push_back(pm.get_version_pred(pm.get_o_pred(stm, 0), 0, real_version));
                 pm.associate(stm, head);
             }
+            ++real_version;
         }
     }
     m_merged_head = (m_heads.size() == 1 && m_heads[0].count == 1)
@@ -1190,13 +1204,14 @@ bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
     bool all_reach_facts_empty = true;
     LOG_STREAM << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(state, m) << std::endl;
     m_reach_solver->assert_expr (state);
+    unsigned real_version = 0;
     for (auto &cfunc : heads()) {
         pred_transformer &pt = ctx.get_pred_transformer(cfunc.func);
         for (unsigned version = 0; version < cfunc.count; ++version) {
             if (!pt.m_reach_facts.empty()) {
                 all_reach_facts_empty = false;
                 expr_ref tag(pt.m_reach_facts.back()->tag(), m);
-                pm.formula_v2v(tag, tag, 0, version);
+                pm.formula_v2v(tag, tag, 0, real_version++);
                 LOG_STREAM << m_name << "::m_reach_solver: assert (pushed) " << mk_pp(m.mk_not(tag), m) << std::endl;
                 m_reach_solver->assert_expr (m.mk_not(tag));
             }
@@ -1267,15 +1282,16 @@ void pred_transformer::find_rules(model &model, versioned_rule_vector& rules) {
     expr_ref val(m);
 
     func_decl_set processed_heads;
+    unsigned rule_version = 0;
     for (auto &cfunc : m_heads) {
         pred_transformer &pt = ctx.get_pred_transformer(cfunc.func);
         for (unsigned version = 0; version < cfunc.count; ++version) {
             for (auto &kv : pt.m_pt_rules) {
                 if (!processed_heads.contains(kv.m_value->rule().get_decl())) {
                     func_decl *tag = kv.m_value->tag()->get_decl();
-                    tag = pm.get_version_pred(tag, 0, version);
+                    tag = pm.get_version_pred(tag, 0, rule_version);
                     if (model.is_true_decl(tag)) {
-                        rules.push_back({&kv.m_value->rule(), version});
+                        rules.push_back({&kv.m_value->rule(), rule_version++});
                         processed_heads.insert(kv.m_value->rule().get_decl());
                     }
                 }
@@ -1300,13 +1316,14 @@ void pred_transformer::find_rules(model &model,
     // prefer a rule where the model intersects with reach facts of all predecessors;
     // also find how many predecessors' reach facts are true in the model
     expr_ref vl(m);
+    unsigned rule_version = 0;
     for (auto &cfunc : m_heads) {
         class pt_rules &pt_rules = ctx.get_pred_transformer(cfunc.func).m_pt_rules;
         for (unsigned version = 0; version < cfunc.count; ++version) {
+            versioned_func id{cfunc.func, version};
             for (auto &kv : pt_rules) {
                 func_decl *tag = kv.m_value->tag()->get_decl();
-                tag = pm.get_version_pred(tag, 0, version);
-                versioned_func id{kv.m_value->rule().get_decl(), version};
+                tag = pm.get_version_pred(tag, 0, rule_version);
 
                 // dvvrd: TODO: something should be done to repeating heads!
                 if (!concrete_heads.contains(id) &&
@@ -1325,13 +1342,13 @@ void pred_transformer::find_rules(model &model,
                         else {
                             expr_ref v(m);
                             pm.formula_n2o(pt.get_last_rf_tag (), v, i);
-                            pm.formula_v2v(v, v, 0, version);
+                            pm.formula_v2v(v, v, 0, rule_version);
                             model.eval(to_app (v.get ())->get_decl (), vl);
                             used = m.is_false (vl);
                             if (!used) {
-                                LOG_STREAM << "app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED" << std::endl;
+                                LOG_STREAM << rule_version << ": app of " << d->get_name() << " in rule for " << r->get_decl()->get_name() << " UNUSED" << std::endl;
                             } else {
-                                LOG_STREAM << version << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED" << std::endl;
+                                LOG_STREAM << rule_version << ": app of " << mk_pp(v, m) << " in rule for " << r->get_decl()->get_name() << " IS USED" << std::endl;
                             }
                             intersects_with_all_rfs &= used;
                         }
@@ -1345,13 +1362,22 @@ void pred_transformer::find_rules(model &model,
                     }
                 }
             }
+            ++rule_version;
         }
     }
     // SASSERT (r);
-    for (auto &kv : best_rules) {
-        is_concrete.push_back(concrete_heads.contains(kv.m_key));
-        rules.push_back({kv.m_value, kv.m_key.version});
-        reach_pred_used.append(reach_pred_used_map.find(kv.m_key));
+    rule_version = 0;
+    for (auto &cfunc : m_heads) {
+        for (unsigned version = 0; version < cfunc.count; ++version) {
+            func_decl *key = cfunc.func;
+            versioned_func id{key, version};
+            if (best_rules.contains(id)) {
+                is_concrete.push_back(concrete_heads.contains(id));
+                rules.push_back({best_rules[id], rule_version});
+                reach_pred_used.append(reach_pred_used_map.find(id));
+            }
+            ++rule_version;
+        }
     }
 }
 
@@ -1378,12 +1404,14 @@ void pred_transformer::get_initials(const versioned_rule_vector &rules, model &m
     for (auto &vr : rules) {
         used_heads.insert({vr.first->get_decl(), vr.second}, true);
     }
+    unsigned real_version = 0;
     for (auto &chead : m_heads) {
         for (unsigned version = 0; version < chead.count; ++version) {
-            if (!used_heads.contains({chead.func, version})) {
+            if (!used_heads.contains({chead.func, real_version})) {
                 pred_transformer &pt = ctx.get_pred_transformer(chead.func);
-                initials.push_back(pt.get_used_rf(mdl, version, true)->get());
+                initials.push_back(pt.get_used_rf(mdl, real_version, true)->get());
             }
+            ++real_version;
         }
     }
 }
@@ -1620,16 +1648,17 @@ void pred_transformer::add_rf (reach_fact *rf)
     LOG_STREAM << m_name << "::m_reach_solver: assert " << mk_pp(fml, m) << std::endl;
     m_reach_solver->assert_expr (fml);
     for (pred_transformer *pt : subsumers()) {
+        unsigned real_version = 0;
         for (auto &p : pt->heads()) {
             if (p.func == m_heads[0].func) {
                 for (unsigned version = 0; version < p.count; ++version) {
                     expr_ref renamed(m);
-                    pm.formula_v2v(fml, renamed, 0, version);
+                    pm.formula_v2v(fml, renamed, 0, real_version++);
                     LOG_STREAM << pt->name() << "::m_reach_solver: assert " << mk_pp(renamed, m) << std::endl;
                     pt->m_reach_solver->assert_expr(renamed);
                 }
                 break;
-            }
+            } else {real_version += p.count;}
         }
     }
     m_reach_fmls.push_back(fml);
@@ -1839,6 +1868,7 @@ void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
                 const lemma_ref_vector &invs = pt.get_bg_invs();
                 CTRACE("spacer", !invs.empty(),
                        tout << "add-bg-invariant: " << mk_pp (pre, m) << "\n";);
+                // TODO: real version!
                 for (auto inv : invs) {
                     for (unsigned version = 0; version < cfunc.count; ++version) {
                         pm.formula_v2v(kv.m_value->tag(), tag, 0, version);
@@ -1856,11 +1886,12 @@ void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
 }
 
 void pred_transformer::get_ext_lits(expr_ref_vector &out) const {
+    unsigned real_version = 0;
     for (auto &cfunc : m_heads) {
         for (unsigned version = 0; version < cfunc.count; ++version) {
             expr *ext_lit = ctx.get_pred_transformer(cfunc.func).m_extend_lit;
             expr_ref renamed(m);
-            pm.formula_v2v(ext_lit, renamed, 0, version);
+            pm.formula_v2v(ext_lit, renamed, 0, real_version++);
             out.push_back(renamed);
         }
     }
@@ -1989,29 +2020,31 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
 
     // populate reach_assumps
     if (n.level () > 0 && !m_all_init) {
+        unsigned real_version = 0;
         for (auto &cfunc : m_heads) {
             pred_transformer &hpt = ctx.get_pred_transformer(cfunc.func);
-            for (auto &kv : hpt.m_pt_rules) {
-                find_predecessors(kv.m_value->rule(), m_predicates);
-                if (m_predicates.empty()) {continue;}
-                for (unsigned i = 0; i < m_predicates.size(); i++) {
-                    const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
-                    for (unsigned version = 0; version < cfunc.count; ++version) {
+            for (unsigned version = 0; version < cfunc.count; ++version) {
+                for (auto &kv : hpt.m_pt_rules) {
+                    find_predecessors(kv.m_value->rule(), m_predicates);
+                    if (m_predicates.empty()) {continue;}
+                    for (unsigned i = 0; i < m_predicates.size(); i++) {
+                        const pred_transformer &pt = ctx.get_pred_transformer(m_predicates[i]);
                         if (pt.has_rfs()) {
                             LOG_STREAM << pt.name() << " has rfs" << std::endl;
                             expr_ref a(m);
                             pm.formula_n2o(pt.get_last_rf_tag(), a, i);
-                            pm.formula_v2v(a, a, 0, version);
+                            pm.formula_v2v(a, a, 0, real_version);
                             reach_assumps.push_back(m.mk_not (a));
                         } else {
                             LOG_STREAM << pt.name() << " doesn't have rfs" << std::endl;
                             expr_ref tag(m);
-                            pm.formula_v2v(kv.m_value->tag(), tag, 0, version);
+                            pm.formula_v2v(kv.m_value->tag(), tag, 0, real_version);
                             reach_assumps.push_back(m.mk_not (tag));
                             break;
                         }
                     }
                 }
+                ++real_version;
             }
         }
     }
@@ -2316,21 +2349,23 @@ void pred_transformer::merge(const vector<std::pair<pred_transformer*, unsigned>
     expr_ref_vector transition(m);
     expr_ref_vector init(m);
     m_all_init = true;
+    unsigned real_version = 0;
     for (auto &pair : pts) {
         pred_transformer *pt = pair.first;
         unsigned count = pair.second;
         for (unsigned version = 0; version < count; ++version) {
             expr_ref tmp(m);
-            pm.formula_v2v(pt->m_transition, tmp, 0, version);
+            pm.formula_v2v(pt->m_transition, tmp, 0, real_version);
             transition.push_back(tmp);
-            pm.formula_v2v(pt->m_init, tmp, 0, version);
+            pm.formula_v2v(pt->m_init, tmp, 0, real_version);
             init.push_back(tmp);
             for (const expr_ref_vector &tc : pt->m_transition_clauses) {
                 expr_ref_vector renamed_tc(m);
-                pm.formulas_v2v(tc, renamed_tc, 0, version);
+                pm.formulas_v2v(tc, renamed_tc, 0, real_version);
                 m_transition_clauses.push_back(renamed_tc);
             }
             m_all_init &= pt->m_all_init;
+            ++real_version;
         }
     }
     flatten_and(transition);
@@ -2351,6 +2386,7 @@ void pred_transformer::merge_child_lemmas(const decls2rel &rels)
         rules.push_back({pt.m_pt_rules, cfunc.count});
     }
     m_occurrences.init(rules);
+    unsigned real_version = 0;
     for (multifunc &cfunc : m_heads) {
         pred_transformer &pt = ctx.get_pred_transformer(cfunc.func);
         for (const datalog::rule *rule : pt.m_rules) {
@@ -2377,7 +2413,7 @@ void pred_transformer::merge_child_lemmas(const decls2rel &rels)
         for (expr *fml : pt.m_reach_fmls) {
             for (unsigned version = 0; version < cfunc.count; ++version) {
                 expr_ref renamed(m);
-                pm.formula_v2v(fml, renamed, 0, version);
+                pm.formula_v2v(fml, renamed, 0, real_version++);
                 LOG_STREAM << m_name << "::m_reach_solver: merge: assert " << mk_pp(renamed, m) << std::endl;
                 m_reach_solver->assert_expr(renamed);
             }
@@ -2653,11 +2689,12 @@ app* pred_transformer::extend_initial (expr *e)
     ic = m.mk_or (m_extend_lit, e, v);
     m_solver->assert_expr (ic);
     for (pred_transformer *pt : subsumers()) {
+        unsigned real_version = 0;
         for (auto cfunc : pt->heads()) {
             if (cfunc.func == m_heads[0].func) {
                 for (unsigned version = 0; version < cfunc.count; ++version) {
                     expr_ref renamed(m);
-                    pm.formula_v2v(ic, renamed, 0, version);
+                    pm.formula_v2v(ic, renamed, 0, real_version++);
                     pt->m_solver->assert_expr (renamed);
                 }
                 break;
@@ -4669,6 +4706,12 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r, 
     return f;
 }
 
+struct func_decl_triple_lt_proc : public std::binary_function<triple<func_decl*,unsigned,unsigned>, triple<func_decl*,unsigned,unsigned>, bool> {
+    bool operator() (const triple<func_decl*,unsigned,unsigned> &a, const triple<func_decl*,unsigned,unsigned> &b) {
+        return !a.first || !b.first || lt(a.first->get_name(), b.first->get_name()) || a.second < b.second || a.third < b.third;
+    }
+};
+
 
 /**
    \brief create children states from model cube.
@@ -4776,9 +4819,13 @@ bool context::create_children(pob& n,
     ptr_vector<func_decl> rec_heads;
     manager::idx_subst rec_oidcs;
     ptr_vector<func_decl> nonrec_heads;
+    vector<triple<func_decl*, unsigned, unsigned>> rec_metaheads;
+    vector<triple<func_decl*, unsigned, unsigned>> nonrec_metaheads;
     manager::source_subst nonrec_source_subst;
     manager::idx_subst nonrec_oidcs;
     manager::source_subst rec_source_subst;
+    unsigned recidx = 0;
+    unsigned nonrecidx = 0;
     unsigned idx = 0;
     for (auto &pair : rules) {
         const datalog::rule *r = pair.first;
@@ -4804,27 +4851,51 @@ bool context::create_children(pob& n,
                 bool is_recursive = false;
                 for (auto &pair : pt.heads()) {
                     if (pair.func == h) {
-                        is_recursive = version < pair.count;
+                        is_recursive = version < pair.count;  // TODO: assume that version is a general one
                         break;
                     }
                 }
                 if (is_recursive) {
-                    LOG_STREAM << "adding recursive summary premise " << h->get_name() << " " << version << std::endl;
-                    rec_heads.push_back(h);
-                    unsigned v = 0;
-                    while (rec_oidcs.contains({h, v})) ++v;
-                    m_pm.add_source_subst(rec_source_subst, h, version, i, v);
-                    m_pm.add_o_subst(rec_oidcs, h, v, i, version);
+                    rec_metaheads.push_back({h, version, i});
                 } else {
-                    LOG_STREAM << "adding non-recursive summary premise " << h->get_name() << " " << version << std::endl;
-                    nonrec_heads.push_back(h);
-                    unsigned v = 0;
-                    while (nonrec_oidcs.contains({h, v})) ++v;
-                    m_pm.add_source_subst(nonrec_source_subst, h, version, i, v);
-                    m_pm.add_o_subst(nonrec_oidcs, h, v, i, version);
+                    nonrec_metaheads.push_back({h,version,i});
                 }
+//                if (is_recursive) {
+//                    LOG_STREAM << "adding recursive summary premise " << h->get_name() << " " << version << std::endl;
+//                    rec_heads.push_back(h);
+////                    unsigned v = 0;
+////                    while (rec_oidcs.contains({h, v})) ++v;
+//                    ++recidx;
+//                    m_pm.add_source_subst(rec_source_subst, h, version, i, recidx);
+//                    m_pm.add_o_subst(rec_oidcs, h, recidx, i, version);
+//                } else {
+//                    LOG_STREAM << "adding non-recursive summary premise " << h->get_name() << " " << version << std::endl;
+//                    nonrec_heads.push_back(h);
+////                    unsigned v = 0;
+////                    while (nonrec_oidcs.contains({h, v})) ++v;
+//                    ++nonrecidx;
+//                    m_pm.add_source_subst(nonrec_source_subst, h, version, i, nonrecidx);
+//                    m_pm.add_o_subst(nonrec_oidcs, h, nonrecidx, i, version);
+//                }
             }
         }
+    }
+    std::sort(rec_metaheads.begin(), rec_metaheads.end(), func_decl_triple_lt_proc());
+    std::sort(nonrec_metaheads.begin(), nonrec_metaheads.end(), func_decl_triple_lt_proc());
+    for (auto &t : rec_metaheads) {
+        LOG_STREAM << "adding recursive summary premise " << t.first->get_name() << " " << recidx << std::endl;
+        rec_heads.push_back(t.first);
+        m_pm.add_source_subst(rec_source_subst, t.first, t.second, t.third, recidx);
+        m_pm.add_o_subst(rec_oidcs, t.first, recidx, t.third, t.second);
+        ++recidx;
+    }
+    for (auto &t : nonrec_metaheads) {
+        // dvvrd: For me in the future: the triple stores <func, version, i>
+        LOG_STREAM << "adding non-recursive summary premise " << t.first->get_name() << " " << nonrecidx << std::endl;
+        nonrec_heads.push_back(t.first);
+        m_pm.add_source_subst(nonrec_source_subst, t.first, t.second, t.third, nonrecidx);
+        m_pm.add_o_subst(nonrec_oidcs, t.first, nonrecidx, t.third, t.second);
+        ++nonrecidx;
     }
 
     SASSERT(!rec_heads.empty() || !nonrec_heads.empty());
@@ -4853,13 +4924,13 @@ bool context::create_children(pob& n,
         const ptr_vector<app> *aux = nullptr;
         expr_ref sum(m);
         sum = premise_pt.get_origin_summary (mdl, prev_level(n.level()), nonrec_oidcs, false, &aux);
-        LOG_STREAM << "SUKAAA NON_REC OR SUM FOR " << premise_pt.name() << " RETURNED " << mk_pp(sum, m) << "\n";
+        LOG_STREAM << "NON_REC OR SUM FOR " << premise_pt.name() << " RETURNED " << mk_pp(sum, m) << std::endl;
         if (!sum) {
-            LOG_STREAM << "BAILING OUT NONREC\n";
+            LOG_STREAM << "BAILING OUT NONREC" << std::endl;
             dealloc(deriv);
             return false;
         }
-        LOG_STREAM << "creating non-recursive child " << premise_pt.name() << "\n";
+        LOG_STREAM << "creating non-recursive child " << premise_pt.name() << std::endl;
         deriv->add_summary_premise(premise_pt, nonrec_source_subst, nonrec_oidcs, sum);
     }
 

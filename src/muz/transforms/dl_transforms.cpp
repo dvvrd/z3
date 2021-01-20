@@ -62,7 +62,7 @@ namespace datalog {
         if (ctx.get_params().datalog_subsumption()) {
             transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 35005));
         }
-        transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 35000));
+        // transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 35000));
         transf.register_plugin(alloc(datalog::mk_coi_filter, ctx, 34990));
         transf.register_plugin(alloc(datalog::mk_interp_tail_simplifier, ctx, 34980));
 
@@ -70,22 +70,22 @@ namespace datalog {
         if (ctx.get_params().datalog_subsumption()) {
             transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34975));
         }
-        transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34970));
+        // transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34970));
         transf.register_plugin(alloc(datalog::mk_coi_filter, ctx, 34960));
         transf.register_plugin(alloc(datalog::mk_interp_tail_simplifier, ctx, 34950));
 
-        if (ctx.get_params().datalog_subsumption()) {
-            transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34940));
-            transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34930));
-            transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34920));
-            transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34910));
-            transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34900));
-            transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34890));
-            transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34880));
-        }
-        else {
-            transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34930));
-        }
+        // if (ctx.get_params().datalog_subsumption()) {
+        //     transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34940));
+        //     transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34930));
+        //     transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34920));
+        //     transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34910));
+        //     transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34900));
+        //     transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34890));
+        //     transf.register_plugin(alloc(datalog::mk_subsumption_checker, ctx, 34880));
+        // }
+        // else {
+        //     transf.register_plugin(alloc(datalog::mk_rule_inliner, ctx, 34930));
+        // }
 
         transf.register_plugin(alloc(datalog::mk_bit_blast, ctx, 35000));
         transf.register_plugin(alloc(datalog::mk_karr_invariants, ctx, 36010));
